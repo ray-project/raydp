@@ -17,7 +17,6 @@
 
 from packaging import version
 import tempfile
-import warnings
 from typing import Any, List, NoReturn, Optional, Union, Dict
 
 import tensorflow as tf
@@ -198,7 +197,7 @@ class TFEstimator(EstimatorInterface, SparkEstimatorInterface):
             if session.get_world_rank() == 0:
                 checkpoint = Checkpoint.from_directory(temp_checkpoint_dir)
 
-        session.report({}, checkpoint=checkpoint)
+            session.report({}, checkpoint=checkpoint)
 
     def fit(self,
             train_ds: Dataset,
