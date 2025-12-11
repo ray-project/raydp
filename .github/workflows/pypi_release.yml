@@ -1,0 +1,108 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: RayDP PyPI Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Git tag to publish (e.g., v1.7.0 or 1.7.0)'
+        required: true
+        type: string
+
+permissions:  # added using https://github.com/step-security/secure-repo
+  contents: read
+
+jobs:
+  build-and-publish:
+    # do not run in forks
+    if: ${{ github.repository_owner == 'ray-project' }}
+    name: build wheel and upload release
+    runs-on: ubuntu-latest
+    env:
+      PYSPARK_VERSION: "3.5.7"
+      RAY_VERSION: "2.40.0"
+    steps:
+    - uses: actions/checkout@61b9e3751b92087fd0b06925ba6dd6314e06f089 # master
+      with:
+        ref: ${{ inputs.tag }}
+        fetch-depth: 0
+    - name: Set up Python 3.10
+      uses: actions/setup-python@e9aba2c848f5ebd159c070c61ea2c4e2b122355e # v2.3.4
+      with:
+        python-version: 3.10.14
+    - name: Set up JDK 1.8
+      uses: actions/setup-java@b6e674f4b717d7b0ae3baee0fbe79f498905dfde # v1.4.4
+      with:
+        java-version: 1.8
+    - name: Install extra dependencies for Ubuntu
+      run: |
+        sudo apt-get install -y mpich
+    - name: Cache pip
+      uses: actions/cache@8492260343ad570701412c2f464a5877dc76bace # v2
+      with:
+        path: ~/.cache/pip
+        key: ubuntu-latest-3.10.14-pip
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install wheel
+        pip install "numpy<1.24" "click<8.3.0"
+        pip install "pydantic<2.0"
+        pip install torch --index-url https://download.pytorch.org/whl/cpu
+        pip install pyarrow "ray[train,default]==${{ env.RAY_VERSION }}" tqdm pytest tensorflow==2.13.1 tabulate grpcio-tools wget
+        pip install "xgboost_ray[default]<=0.1.13"
+        pip install "xgboost<=2.0.3"
+        pip install torchmetrics
+    - name: Cache Maven
+      uses: actions/cache@8492260343ad570701412c2f464a5877dc76bace # v2
+      with:
+        path: ~/.m2
+        key: ubuntu-latest-m2-${{ hashFiles('core/pom.xml') }}
+    - name: Build and install
+      env:
+        GITHUB_CI: 1
+      run: |
+        pip install pyspark==${{ env.PYSPARK_VERSION }}
+        ./build.sh
+        pip install dist/raydp-*.whl
+    - name: Lint
+      run: |
+        pip install pylint==2.8.3
+        pylint --rcfile=python/pylintrc python/raydp
+        pylint --rcfile=python/pylintrc examples/*.py
+    - name: Test with pytest
+      run: |
+        ray start --head --num-cpus 6
+        pytest python/raydp/tests/ -v
+        ray stop --force
+    - name: Test Examples
+      run: |
+        ray start --head
+        python examples/raydp-submit.py
+        python examples/test_raydp_submit_pyfiles.py
+        ray stop
+        python examples/pytorch_nyctaxi.py
+        python examples/tensorflow_nyctaxi.py
+        python examples/xgboost_ray_nyctaxi.py
+        # python examples/raytrain_nyctaxi.py
+        python examples/data_process.py
+    - name: Upload to PyPI
+      uses: pypa/gh-action-pypi-publish@v1.13.0
+      with:
+        password: ${{ secrets.PYPI_API_TOKEN }}
