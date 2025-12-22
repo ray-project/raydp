@@ -156,9 +156,7 @@ class MPIWorker:
                                                                 worker_port=self.server_port)
         reply = stub.RegisterWorkerService(register_msg)
 
-        # init ray
         ray.init(address=reply.ray_address,
-                 _redis_password=reply.redis_password,
                  _node_ip_address=self.node_ip_address)
 
         self.driver_stub = stub
