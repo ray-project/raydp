@@ -300,8 +300,7 @@ class MPIJob:
                 self.register_event.set()
                 self.registered = 0
         node = ray.worker.global_worker.node
-        return network_pb2.RegisterWorkerServiceReply(ray_address=node.address,
-                                                      redis_password=node.redis_password)
+        return network_pb2.RegisterWorkerServiceReply(ray_address=node.address)
 
     def handle_register_function_result(self, request: network_pb2.FunctionResult):
         with self.func_result.lock:
