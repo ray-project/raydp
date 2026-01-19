@@ -4,36 +4,23 @@ Thank you for your interest in contributing to RayDP!
 
 ## Development Environment Setup
 
-RayDP is a mixed-language project (Scala + Python). To set up your development environment correctly in IntelliJ IDEA, please follow these steps.
+RayDP is a mixed-language project (Scala + Python). To set up your development environment correctly, please ensure your IDE meets the following requirements.
 
 ### Prerequisites
-* **Java:** JDK 17 (Recommended to match CI).
-* **Python:** Python 3.8+ (Recommended: Use Conda or virtualenv).
+* **Java:** JDK 8 (Required for Spark 3.x compatibility).
+* **Python:** Python 3.10+ (Recommended).
 * **Maven:** 3.6+
 
-### IntelliJ IDEA Configuration
+### Project Configuration
+Regardless of your IDE (IntelliJ, VS Code, Eclipse), your project structure must be configured as follows:
 
-1.  **Import the Project**
-    * Open the root `raydp` folder in IntelliJ.
-    * If prompted, choose **"Trust Project"**.
-    * If the Maven project is not auto-detected, right-click `core/pom.xml` in the Project view and select **"Add as Maven Project"**.
-
-2.  **Project Structure** (`Cmd + ;` on macOS)
-    * Go to **Project Settings > Project**.
-    * Set **SDK** to **17** (Java 17).
-    * Set **Language Level** to **17**.
-
-3.  **Module Configuration**
-    To ensure code completion works for both Scala and Python:
-    * Go to **Project Settings > Modules**.
-    * **Scala:** Select the `raydp-core` module. Ensure `src/main/scala` is marked as **Sources** (Blue) and `src/test/scala` as **Tests** (Green).
-    * **Python:** Click `+` > **New Module** (or "Import Module").
-        * Select the `python/` directory in your project root.
-        * Set the **Module SDK** to your local Python environment (e.g., Conda `raydp-dev`).
-        * Mark `python/raydp` as **Sources** if not automatically detected.
+1.  **Maven Root:** The build system is rooted in the `core` directory. You should import `core/pom.xml` as your Maven project.
+2.  **Java SDK:** Ensure the project SDK is set to **Java 8**.
+3.  **Python Sources:** The `python/` directory in the root must be marked as a source root so your IDE can resolve the `raydp` package.
 
 ### Verification
-To verify your setup, run the build from the terminal (or the Maven side panel):
+To verify your setup, run the build from the `core` directory:
 
 ```bash
+cd core
 mvn clean package -DskipTests
