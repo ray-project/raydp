@@ -20,20 +20,10 @@ package com.intel.raydp.shims.spark350
 import com.intel.raydp.shims.{SparkShims, SparkShimDescriptor}
 
 object SparkShimProvider {
-  val SPARK350_DESCRIPTOR = SparkShimDescriptor(3, 5, 0)
-  val SPARK351_DESCRIPTOR = SparkShimDescriptor(3, 5, 1)
-  val SPARK352_DESCRIPTOR = SparkShimDescriptor(3, 5, 2)
-  val SPARK353_DESCRIPTOR = SparkShimDescriptor(3, 5, 3)
-  val SPARK354_DESCRIPTOR = SparkShimDescriptor(3, 5, 4)
-  val SPARK355_DESCRIPTOR = SparkShimDescriptor(3, 5, 5)
-  val SPARK356_DESCRIPTOR = SparkShimDescriptor(3, 5, 6)
-  val SPARK357_DESCRIPTOR = SparkShimDescriptor(3, 5, 7)
-  val DESCRIPTOR_STRINGS = Seq(
-    s"$SPARK350_DESCRIPTOR", s"$SPARK351_DESCRIPTOR", s"$SPARK352_DESCRIPTOR",
-    s"$SPARK353_DESCRIPTOR", s"$SPARK354_DESCRIPTOR", s"$SPARK355_DESCRIPTOR",
-    s"$SPARK356_DESCRIPTOR", s"$SPARK357_DESCRIPTOR"
-  )
-  val DESCRIPTOR = SPARK350_DESCRIPTOR
+  private val SUPPORTED_PATCHES = 0 to 7
+  val DESCRIPTORS = SUPPORTED_PATCHES.map(p => SparkShimDescriptor(3, 5, p))
+  val DESCRIPTOR_STRINGS = DESCRIPTORS.map(_.toString)
+  val DESCRIPTOR = DESCRIPTORS.head
 }
 
 class SparkShimProvider extends com.intel.raydp.shims.SparkShimProvider {
