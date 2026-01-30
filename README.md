@@ -153,28 +153,25 @@ Please refer to [NYC Taxi PyTorch Estimator](./examples/pytorch_nyctaxi.py) and 
 
 ***Fault Tolerance***
 
-The ray dataset converted from spark dataframe like above is not fault-tolerant. This is because we implement it using `Ray.put` combined with spark `mapPartitions`. Objects created by `Ray.put` is not recoverable in Ray.
+RayDP now converts Spark DataFrames to Ray Datasets using a recoverable pipeline by default. This makes the resulting Ray Dataset resilient to Spark executor loss (the Arrow IPC bytes are cached in Spark and fetched via Ray tasks with lineage).
 
-RayDP now supports converting data in a way such that the resulting ray dataset is fault-tolerant. This feature is currently *experimental*. Here is how to use it:
+The recoverable conversion is also available directly via `raydp.spark.from_spark_recoverable`, and it persists (caches) the Spark DataFrame. You can provide the storage level through the `storage_level` keyword parameter.
+
 ```python
 import ray
 import raydp
 
 ray.init(address="auto")
-# set fault_tolerance_mode to True to enable the feature
-# this will connect pyspark driver to ray cluster
 spark = raydp.init_spark(app_name="RayDP Example",
                          num_executors=2,
                          executor_cores=2,
-                         executor_memory="4GB",
-                         fault_tolerance_mode=True)
-# df should be large enough so that result will be put into plasma
+                         executor_memory="4GB")
+
 df = spark.range(100000)
-# use this API instead of ray.data.from_spark
-ds = raydp.spark.from_spark_recoverable(df)
-# ds is now fault-tolerant.
+ds = raydp.spark.from_spark_recoverable(df)  # fault-tolerant
 ```
-Notice that `from_spark_recoverable` will persist the converted dataframe. You can provide the storage level through keyword parameter `storage_level`. In addition, this feature is not available in ray client mode. If you need to use ray client, please wrap your application in a ray actor, as described in the ray client chapter.
+
+Note: recoverable conversion is not available in Ray client mode. If you need to use Ray client, wrap your application in a Ray actor as described in the Ray client docs.
 
 
 ## Getting Involved

@@ -18,155 +18,27 @@
 package org.apache.spark.sql.raydp
 
 import com.intel.raydp.shims.SparkShimLoader
-import io.ray.api.{ActorHandle, ObjectRef, PyActorHandle, Ray}
+import io.ray.api.{ActorHandle, ObjectRef, Ray}
 import io.ray.runtime.AbstractRayRuntime
-import java.io.ByteArrayOutputStream
 import java.util.{List, UUID}
 import java.util.concurrent.{ConcurrentHashMap, ConcurrentLinkedQueue}
 import java.util.function.{Function => JFunction}
-import org.apache.arrow.vector.VectorSchemaRoot
-import org.apache.arrow.vector.ipc.ArrowStreamWriter
 import org.apache.arrow.vector.types.pojo.Schema
 import scala.collection.JavaConverters._
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.{RayDPException, SparkContext}
 import org.apache.spark.deploy.raydp._
 import org.apache.spark.executor.RayDPExecutor
+import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.raydp.{RayDPUtils, RayExecutorUtils}
 import org.apache.spark.sql.DataFrame
-import org.apache.spark.sql.execution.arrow.ArrowWriter
-import org.apache.spark.sql.execution.python.BatchIterator
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.util.ArrowUtils
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.util.Utils
-
-/**
- * A batch of record that has been wrote into Ray object store.
- * @param ownerAddress the owner address of the ray worker
- * @param objectId the ObjectId for the stored data
- * @param numRecords the number of records for the stored data
- */
-case class RecordBatch(
-    ownerAddress: Array[Byte],
-    objectId: Array[Byte],
-    numRecords: Int)
 
 class ObjectStoreWriter(@transient val df: DataFrame) extends Serializable {
 
   val uuid: UUID = ObjectStoreWriter.dfToId.getOrElseUpdate(df, UUID.randomUUID())
-
-  def writeToRay(
-      data: Array[Byte],
-      numRecords: Int,
-      queue: ObjectRefHolder.Queue,
-      ownerName: String): RecordBatch = {
-
-    var objectRef: ObjectRef[Array[Byte]] = null
-    if (ownerName == "") {
-      objectRef = Ray.put(data)
-    } else {
-      var dataOwner: PyActorHandle = Ray.getActor(ownerName).get()
-      objectRef = Ray.put(data, dataOwner)
-    }
-
-    // add the objectRef to the objectRefHolder to avoid reference GC
-    queue.add(objectRef)
-    val objectRefImpl = RayDPUtils.convert(objectRef)
-    val objectId = objectRefImpl.getId
-    val runtime = Ray.internal.asInstanceOf[AbstractRayRuntime]
-    val addressInfo = runtime.getObjectStore.getOwnershipInfo(objectId)
-    RecordBatch(addressInfo, objectId.getBytes, numRecords)
-  }
-
-  /**
-   * Save the DataFrame to Ray object store with Apache Arrow format.
-   */
-  def save(useBatch: Boolean, ownerName: String): List[RecordBatch] = {
-    val conf = df.queryExecution.sparkSession.sessionState.conf
-    val timeZoneId = conf.getConf(SQLConf.SESSION_LOCAL_TIMEZONE)
-    var batchSize = conf.getConf(SQLConf.ARROW_EXECUTION_MAX_RECORDS_PER_BATCH)
-    if (!useBatch) {
-      batchSize = 0
-    }
-    val schema = df.schema
-
-    val objectIds = df.queryExecution.toRdd.mapPartitions{ iter =>
-      val queue = ObjectRefHolder.getQueue(uuid)
-
-      // DO NOT use iter.grouped(). See BatchIterator.
-      val batchIter = if (batchSize > 0) {
-        new BatchIterator(iter, batchSize)
-      } else {
-        Iterator(iter)
-      }
-
-      val arrowSchema = SparkShimLoader.getSparkShims.toArrowSchema(schema, timeZoneId)
-      val allocator = ArrowUtils.rootAllocator.newChildAllocator(
-        s"ray object store writer", 0, Long.MaxValue)
-      val root = VectorSchemaRoot.create(arrowSchema, allocator)
-      val results = new ArrayBuffer[RecordBatch]()
-
-      val byteOut = new ByteArrayOutputStream()
-      val arrowWriter = ArrowWriter.create(root)
-      var numRecords: Int = 0
-
-      Utils.tryWithSafeFinally {
-        while (batchIter.hasNext) {
-          // reset the state
-          numRecords = 0
-          byteOut.reset()
-          arrowWriter.reset()
-
-          // write out the schema meta data
-          val writer = new ArrowStreamWriter(root, null, byteOut)
-          writer.start()
-
-          // get the next record batch
-          val nextBatch = batchIter.next()
-
-          while (nextBatch.hasNext) {
-            numRecords += 1
-            arrowWriter.write(nextBatch.next())
-          }
-
-          // set the write record count
-          arrowWriter.finish()
-          // write out the record batch to the underlying out
-          writer.writeBatch()
-
-          // get the wrote ByteArray and save to Ray ObjectStore
-          val byteArray = byteOut.toByteArray
-          results += writeToRay(byteArray, numRecords, queue, ownerName)
-          // end writes footer to the output stream and doesn't clean any resources.
-          // It could throw exception if the output stream is closed, so it should be
-          // in the try block.
-          writer.end()
-        }
-        arrowWriter.reset()
-        byteOut.close()
-      } {
-        // If we close root and allocator in TaskCompletionListener, there could be a race
-        // condition where the writer thread keeps writing to the VectorSchemaRoot while
-        // it's being closed by the TaskCompletion listener.
-        // Closing root and allocator here is cleaner because root and allocator is owned
-        // by the writer thread and is only visible to the writer thread.
-        //
-        // If the writer thread is interrupted by TaskCompletionListener, it should either
-        // (1) in the try block, in which case it will get an InterruptedException when
-        // performing io, and goes into the finally block or (2) in the finally block,
-        // in which case it will ignore the interruption and close the resources.
-
-        root.close()
-        allocator.close()
-      }
-
-      results.toIterator
-    }.collect()
-    objectIds.toSeq.asJava
-  }
 
   /**
    * For test.
@@ -201,6 +73,15 @@ object ObjectStoreWriter {
     }
   }
 
+  private def parseMemoryBytes(value: String): Double = {
+    if (value == null || value.isEmpty) {
+      0.0
+    } else {
+      // Spark parser supports both plain numbers (bytes) and strings like "100M", "2g".
+      JavaUtils.byteStringAsBytes(value).toDouble
+    }
+  }
+
   def getAddress(): Array[Byte] = {
     if (address == null) {
       val objectRef = Ray.put(1)
@@ -218,6 +99,7 @@ object ObjectStoreWriter {
     SparkShimLoader.getSparkShims.toArrowSchema(df.schema, timeZoneId)
   }
 
+  @deprecated
   def fromSparkRDD(df: DataFrame, storageLevel: StorageLevel): Array[Array[Byte]] = {
     if (!Ray.isInitialized) {
       throw new RayDPException(
@@ -267,6 +149,67 @@ object ObjectStoreWriter {
     results
   }
 
+  /**
+   * Prepare a Spark ArrowBatch RDD for recoverable conversion and return metadata needed by
+   * Python to build reconstructable Ray Dataset blocks via Ray tasks.
+   *
+   * This method:
+   * - persists and materializes the ArrowBatch RDD in Spark (so partitions can be re-fetched)
+   * - computes per-partition executor locations (Spark executor IDs)
+   *
+   * It does NOT push any data to Ray.
+   */
+  def prepareRecoverableRDD(
+      df: DataFrame,
+      storageLevel: StorageLevel): RecoverableRDDInfo = {
+    if (!Ray.isInitialized) {
+      throw new RayDPException(
+        "Not yet connected to Ray! Please set fault_tolerant_mode=True when starting RayDP.")
+    }
+
+    val rdd = df.toArrowBatchRdd
+    rdd.persist(storageLevel)
+    rdd.count()
+
+    var executorIds = df.sqlContext.sparkContext.getExecutorIds.toArray
+    val numExecutors = executorIds.length
+    val appMasterHandle = Ray.getActor(RayAppMaster.ACTOR_NAME)
+                             .get.asInstanceOf[ActorHandle[RayAppMaster]]
+    val restartedExecutors = RayAppMasterUtils.getRestartedExecutors(appMasterHandle)
+    if (!restartedExecutors.isEmpty) {
+      for (i <- 0 until numExecutors) {
+        if (restartedExecutors.containsKey(executorIds(i))) {
+          val oldId = restartedExecutors.get(executorIds(i))
+          executorIds(i) = oldId
+        }
+      }
+    }
+
+    val schemaJson = ObjectStoreWriter.toArrowSchema(df).toJson
+    val numPartitions = rdd.getNumPartitions
+
+    val handles = executorIds.map { id =>
+      Ray.getActor("raydp-executor-" + id)
+         .get
+         .asInstanceOf[ActorHandle[RayDPExecutor]]
+    }
+    val locations = RayExecutorUtils.getBlockLocations(handles(0), rdd.id, numPartitions)
+
+    RecoverableRDDInfo(rdd.id, numPartitions, schemaJson, driverAgentUrl, locations)
+  }
+
+}
+
+case class RecoverableRDDInfo(
+    rddId: Int,
+    numPartitions: Int,
+    schemaJson: String,
+    driverAgentUrl: String,
+    locations: Array[String])
+
+object RecoverableRDDInfo {
+  // Empty constructor for reflection / Java interop (some tools expect it).
+  def empty: RecoverableRDDInfo = RecoverableRDDInfo(0, 0, "", "", Array.empty[String])
 }
 
 object ObjectRefHolder {

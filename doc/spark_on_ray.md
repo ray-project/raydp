@@ -143,6 +143,30 @@ with open(conf_path, "w") as f:
  ```
  3. Run your application, such as `raydp-submit --ray-conf /path/to/ray.conf --class org.apache.spark.examples.SparkPi --conf spark.executor.cores=1 --conf spark.executor.instances=1 --conf spark.executor.memory=500m $SPARK_HOME/examples/jars/spark-examples.jar`. Note that `--ray-conf` must be specified right after raydp-submit, and before any spark arguments.
 
+ 4. If you are using Java 17 or above, you must add the necessary `--add-opens` and `--add-exports` JVM options for reflective access required by Spark and RayDP. You can do this by specifying the following options in your Spark configurations, for both the executor and driver (and `raydp_app_master`):
+
+    ```
+    --conf spark.executor.extraJavaOptions="-XX:+IgnoreUnrecognizedVMOptions --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.math=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/sun.nio.cs=ALL-UNNAMED --add-opens=java.base/sun.security.action=ALL-UNNAMED --add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
+    --conf spark.driver.extraJavaOptions="<repeat the options above>"
+    --conf spark.ray.raydp_app_master.extraJavaOptions="<repeat the options above>"
+    ```
+
+    This ensures compatible reflective access for Spark, Ray serialization, and RayDP under Java 17+. If using `raydp-submit` in a script, you'll need to include these as shown:
+
+    ```
+    raydp-submit --ray-conf /path/to/ray.conf \
+      --class org.apache.spark.examples.SparkPi \
+      --conf spark.executor.cores=1 \
+      --conf spark.executor.instances=1 \
+      --conf spark.executor.memory=500m \
+      --conf spark.executor.extraJavaOptions="..." \
+      --conf spark.driver.extraJavaOptions="..." \
+      --conf spark.ray.raydp_app_master.extraJavaOptions="..." \
+      $SPARK_HOME/examples/jars/spark-examples.jar
+    ```
+
+    Make sure to replace the `...` with the full set of options above.
+    
 ### Placement Group
 RayDP can leverage Ray's placement group feature and schedule executors onto specified placement group. It provides better control over the allocation of Spark executors on a Ray cluster, for example spreading the spark executors onto separate nodes or starting all executors on a single node. You can specify a created placement group when init spark, as shown below:
 

@@ -23,6 +23,7 @@ from typing import Dict
 import pyspark
 import pytest
 import ray
+import ray.util.client as ray_client
 import raydp
 from pyspark.sql import SparkSession
 
@@ -90,6 +91,9 @@ def spark_on_ray_small(request, jdk17_extra_spark_configs):
         ray.init(address="local", num_cpus=6, include_dashboard=False)
     else:
         ray.init(address=request.param)
+        if ray_client.ray.is_connected():
+            ray.shutdown()
+            pytest.skip("Skip Spark-on-Ray fixture in Ray client mode")
     node_ip = ray.util.get_node_ip_address()
     extra_configs = {
         "spark.driver.host": node_ip,
@@ -115,6 +119,9 @@ def spark_on_ray_2_executors(request, jdk17_extra_spark_configs):
         ray.init(address="local", num_cpus=6, include_dashboard=False)
     else:
         ray.init(address=request.param)
+        if ray_client.ray.is_connected():
+            ray.shutdown()
+            pytest.skip("Skip Spark-on-Ray fixture in Ray client mode")
     node_ip = ray.util.get_node_ip_address()
     extra_configs = {
         "spark.driver.host": node_ip,

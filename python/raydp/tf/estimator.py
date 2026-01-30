@@ -16,26 +16,27 @@
 #
 
 from packaging import version
+import platform
 import tempfile
-from typing import Any, List, NoReturn, Optional, Union, Dict
+from typing import Any, Dict, List, NoReturn, Optional, Union
 
 import tensorflow as tf
 import tensorflow.keras as keras
-from tensorflow import DType, TensorShape
 from tensorflow.keras.callbacks import Callback
 
 import ray
-from ray.train import Checkpoint
-from ray.train.tensorflow import TensorflowTrainer, TensorflowCheckpoint, prepare_dataset_shard
 from ray.air import session
 from ray.air.config import ScalingConfig, RunConfig, FailureConfig
-from ray.data import read_parquet
+from ray.train import Checkpoint
+from ray.train.tensorflow import TensorflowCheckpoint, TensorflowTrainer
 from ray.data.dataset import Dataset
 from ray.data.preprocessors import Concatenator
+
 from raydp.estimator import EstimatorInterface
+from raydp.spark import get_raydp_master_owner, spark_dataframe_to_ray_dataset
+from raydp.spark.dataset import read_spark_parquet
 from raydp.spark.interfaces import SparkEstimatorInterface, DF, OPTIONAL_DF
 from raydp import stop_spark
-from raydp.spark import spark_dataframe_to_ray_dataset, get_raydp_master_owner
 
 class TFEstimator(EstimatorInterface, SparkEstimatorInterface):
     def __init__(self,
@@ -103,7 +104,16 @@ class TFEstimator(EstimatorInterface, SparkEstimatorInterface):
             # it is a str represents the optimizer
             _optimizer = optimizer
         elif isinstance(optimizer, keras.optimizers.Optimizer):
-            _optimizer = keras.optimizers.serialize(optimizer)
+            # On Apple Silicon (arm64) Macs, Keras may fall back to legacy optimizers for
+            # performance reasons. Ensure we serialize a legacy optimizer config up-front so
+            # deserialization doesn't trip over newer fields like "weight_decay".
+            if platform.system() == "Darwin" and platform.processor() == "arm":
+                from keras.src.optimizers import convert_to_legacy_optimizer  # pylint: disable=import-outside-toplevel
+
+                legacy_optimizer = convert_to_legacy_optimizer(optimizer)
+                _optimizer = keras.optimizers.serialize(legacy_optimizer)
+            else:
+                _optimizer = keras.optimizers.serialize(optimizer)
         else:
             raise Exception(
                 "Unsupported parameter, we only support keras.optimizers.Optimizer subclass "
@@ -273,11 +283,11 @@ class TFEstimator(EstimatorInterface, SparkEstimatorInterface):
             app_id = train_df.sql_ctx.sparkSession.sparkContext.applicationId
             path = fs_directory.rstrip("/") + f"/{app_id}"
             train_df.write.parquet(path+"/train", compression=compression)
-            train_ds = read_parquet(path+"/train")
+            train_ds = read_spark_parquet(path+"/train")
             if evaluate_df is not None:
                 evaluate_df = self._check_and_convert(evaluate_df)
                 evaluate_df.write.parquet(path+"/test", compression=compression)
-                evaluate_ds = read_parquet(path+"/test")
+                evaluate_ds = read_spark_parquet(path+"/test")
         else:
             owner = None
             if stop_spark_after_conversion:

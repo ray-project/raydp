@@ -21,16 +21,19 @@ import os
 import sys
 import shutil
 
-import tensorflow as tf
-import tensorflow.keras as keras
+import tensorflow as tf  # pylint: disable=import-error
+import tensorflow.keras as keras  # pylint: disable=import-error  # type: ignore[import-not-found]
 
 from pyspark.sql.functions import rand
 
 from raydp.tf import TFEstimator
 from raydp.utils import random_split
+import ray.util.client as ray_client
 
 @pytest.mark.parametrize("use_fs_directory", [True, False])
 def test_tf_estimator(spark_on_ray_small, use_fs_directory):
+    if ray_client.ray.is_connected():
+        pytest.skip("Skip TF estimator tests in Ray client mode")
     spark = spark_on_ray_small
 
     # ---------------- data process with Spark ------------

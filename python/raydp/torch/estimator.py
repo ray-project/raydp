@@ -28,9 +28,8 @@ from raydp.spark.interfaces import SparkEstimatorInterface, DF, OPTIONAL_DF
 from raydp.torch.torch_metrics import TorchMetric
 from raydp import stop_spark
 from raydp.spark import spark_dataframe_to_ray_dataset, get_raydp_master_owner
+from raydp.spark.dataset import read_spark_parquet
 from raydp.torch.config import TorchConfig
-
-import ray
 from ray import train
 from ray.train import Checkpoint
 from ray.train.torch import TorchTrainer, TorchCheckpoint
@@ -370,11 +369,11 @@ class TorchEstimator(EstimatorInterface, SparkEstimatorInterface):
             app_id = train_df.sql_ctx.sparkSession.sparkContext.applicationId
             path = fs_directory.rstrip("/") + f"/{app_id}"
             train_df.write.parquet(path+"/train", compression=compression)
-            train_ds = ray.data.read_parquet(path+"/train")
+            train_ds = read_spark_parquet(path+"/train")
             if evaluate_df is not None:
                 evaluate_df = self._check_and_convert(evaluate_df)
                 evaluate_df.write.parquet(path+"/test", compression=compression)
-                evaluate_ds = ray.data.read_parquet(path+"/test")
+                evaluate_ds = read_spark_parquet(path+"/test")
         else:
             owner = None
             if stop_spark_after_conversion:

@@ -22,17 +22,17 @@ import platform
 import pytest
 import pyarrow
 import ray
-
-from multiprocessing import get_context
+from ray.job_config import JobConfig
 
 from ray.util.placement_group import placement_group_table
 
 import raydp
 import raydp.utils as utils
-from raydp.spark.ray_cluster_master import RayDPSparkMaster, RAYDP_SPARK_MASTER_SUFFIX
+from raydp.spark.ray_cluster_master import RAYDP_SPARK_MASTER_SUFFIX
 from ray.cluster_utils import Cluster
 import ray.util.client as ray_client
 
+@pytest.mark.parametrize("spark_on_ray_small", ["local"], indirect=True)
 def test_spark(spark_on_ray_small):
     spark = spark_on_ray_small
     result = spark.range(0, 10).count()
@@ -46,7 +46,11 @@ def test_legacy_spark_on_fractional_cpu(jdk17_extra_spark_configs):
             "num_cpus": 2
         })
 
-    ray.init(address=cluster.address, include_dashboard=False)
+    ray.init(
+        address=cluster.address,
+        include_dashboard=False,
+        job_config=JobConfig(code_search_path=[os.getcwd()]),
+    )
     spark = raydp.init_spark(app_name="test_cpu_fraction",
                              num_executors=1, executor_cores=3, executor_memory="500M",
                              configs={"spark.ray.actor.resource.cpu": "0.1",
@@ -106,6 +110,7 @@ def test_spark_executor_node_affinity(jdk17_extra_spark_configs):
     cluster.shutdown()
 
 
+@pytest.mark.parametrize("ray_cluster", ["local"], indirect=True)
 def test_spark_remote(ray_cluster):
     @ray.remote
     class SparkRemote:
@@ -129,6 +134,7 @@ def test_spark_remote(ray_cluster):
     ray.get(driver.stop.remote())
 
 
+@pytest.mark.parametrize("spark_on_ray_small", ["local"], indirect=True)
 def test_spark_driver_and_executor_hostname(spark_on_ray_small):
     if platform.system() == "Darwin":
         pytest.skip("Skip this test on mac")
@@ -150,16 +156,9 @@ def test_ray_dataset_roundtrip(jdk17_extra_spark_configs):
     )
     ray.init(address=cluster.address, include_dashboard=False)
     
-    configs = {
-        # This looks like a bug in Spark, where RayCoarseGrainedSchedulerBackend
-        # always get the same sparkContext between tests.
-        # So we need to re-set the resource explicitly here.
-        "spark.ray.raydp_spark_executor.actor.resource.spark_executor": "0",
-        **jdk17_extra_spark_configs
-    }
     spark = raydp.init_spark(app_name="test_ray_dataset_roundtrip", num_executors=2, 
                              executor_cores=1, executor_memory="500M",
-                             configs=configs)
+                             configs=jdk17_extra_spark_configs)
 
     # skipping this to be compatible with ray 2.4.0
     # see issue #343
@@ -186,6 +185,7 @@ def test_ray_dataset_roundtrip(jdk17_extra_spark_configs):
     cluster.shutdown()
 
 
+@pytest.mark.parametrize("spark_on_ray_2_executors", ["local"], indirect=True)
 def test_ray_dataset_to_spark(spark_on_ray_2_executors):
     # skipping this to be compatible with ray 2.4.0
     # see issue #343
@@ -216,6 +216,7 @@ def test_ray_dataset_to_spark(spark_on_ray_2_executors):
     assert ids == rows2
 
 
+@pytest.mark.parametrize("ray_cluster", ["local"], indirect=True)
 def test_placement_group(ray_cluster, jdk17_extra_spark_configs):
     for pg_strategy in ["PACK", "STRICT_PACK", "SPREAD", "STRICT_SPREAD"]:
         spark = raydp.init_spark(f"test_strategy_{pg_strategy}_1", 1, 1, "500M",
@@ -267,13 +268,17 @@ def test_reconstruction(jdk17_extra_spark_configs):
         }
     )
     
-    ray.init(address=cluster.address, include_dashboard=False)
+    ray.init(
+        address=cluster.address,
+        include_dashboard=False,
+        job_config=JobConfig(code_search_path=[os.getcwd()]),
+    )
     # init_spark before adding nodes to ensure drivers connect to the head node
     spark = raydp.init_spark('a', 2, 1, '500m', fault_tolerant_mode=True,
                              configs=jdk17_extra_spark_configs)
     # Add two nodes, 1 executor each
     node_to_kill = cluster.add_node(num_cpus=1, object_store_memory=10 ** 8)
-    second_node = cluster.add_node(num_cpus=1, object_store_memory=10 ** 8)
+    cluster.add_node(num_cpus=1, object_store_memory=10 ** 8)
     # wait for executors to start
     time.sleep(5)
     # df should be large enough so that result will be put into plasma

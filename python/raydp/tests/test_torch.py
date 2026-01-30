@@ -15,7 +15,6 @@
 # limitations under the License.
 #
 
-from pyspark.sql import SparkSession
 import pytest
 import os
 import sys
@@ -25,14 +24,17 @@ import torch
 # https://spark.apache.org/docs/latest/api/python/migration_guide/koalas_to_pyspark.html
 # import databricks.koalas as ks
 import pyspark.pandas as ps
+import ray.util.client as ray_client
 
 from raydp.torch import TorchEstimator
 from raydp.utils import random_split
 
 @pytest.mark.parametrize("use_fs_directory", [True, False])
 def test_torch_estimator(spark_on_ray_small, use_fs_directory):
+    if ray_client.ray.is_connected():
+        pytest.skip("Skip Torch estimator tests in Ray client mode")
     # ---------------- data process with koalas ------------
-    spark: SparkSession = spark_on_ray_small
+    _ = spark_on_ray_small
 
     # calculate z = 3 * x + 4 * y + 5
     df = ps.range(0, 100000)

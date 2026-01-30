@@ -23,6 +23,7 @@ import pytest
 import pyspark
 import numpy as np
 from pyspark.sql.functions import rand
+import ray.util.client as ray_client
 
 from raydp.xgboost import XGBoostEstimator
 from raydp.utils import random_split
@@ -31,6 +32,8 @@ from raydp.utils import random_split
 def test_xgb_estimator(spark_on_ray_small, use_fs_directory):
     if platform.system() == "Darwin":
         pytest.skip("Skip xgboost test on MacOS")
+    if ray_client.ray.is_connected():
+        pytest.skip("Skip xgboost estimator tests in Ray client mode")
     spark = spark_on_ray_small
 
     # calculate z = 3 * x + 4 * y + 5

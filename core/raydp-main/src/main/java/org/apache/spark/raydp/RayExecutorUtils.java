@@ -21,18 +21,14 @@ import io.ray.api.ActorHandle;
 import io.ray.api.ObjectRef;
 import io.ray.api.Ray;
 import io.ray.api.call.ActorCreator;
-import java.util.Map;
-import java.util.List;
-
 import io.ray.api.placementgroup.PlacementGroup;
 import io.ray.runtime.object.ObjectRefImpl;
+import java.util.List;
+import java.util.Map;
 import org.apache.spark.executor.RayDPExecutor;
 
 public class RayExecutorUtils {
-  /**
-   * Convert from mbs -> memory units. The memory units in ray is byte
-   */
-
+  /** Convert from mbs -> memory units. The memory units in ray is byte. */
   private static double toMemoryUnits(int memoryInMB) {
     double result = 1.0 * memoryInMB * 1024 * 1024;
     return Math.round(result);
@@ -47,14 +43,13 @@ public class RayExecutorUtils {
       PlacementGroup placementGroup,
       int bundleIndex,
       List<String> javaOpts) {
-    ActorCreator<RayDPExecutor> creator = Ray.actor(
-            RayDPExecutor::new, executorId, appMasterURL);
+    ActorCreator<RayDPExecutor> creator = Ray.actor(RayDPExecutor::new, executorId, appMasterURL);
     creator.setName("raydp-executor-" + executorId);
     creator.setJvmOptions(javaOpts);
     creator.setResource("CPU", cores);
     creator.setResource("memory", toMemoryUnits(memoryInMB));
 
-    for (Map.Entry<String, Double> entry: resources.entrySet()) {
+    for (Map.Entry<String, Double> entry : resources.entrySet()) {
       creator.setResource(entry.getKey(), entry.getValue());
     }
     if (placementGroup != null) {
@@ -72,16 +67,12 @@ public class RayExecutorUtils {
       String driverUrl,
       int cores,
       String classPathEntries) {
-    handler.task(RayDPExecutor::startUp,
-        appId, driverUrl, cores, classPathEntries).remote();
+    handler.task(RayDPExecutor::startUp, appId, driverUrl, cores, classPathEntries).remote();
   }
 
   public static String[] getBlockLocations(
-      ActorHandle<RayDPExecutor> handler,
-      int rddId,
-      int numPartitions) {
-    return handler.task(RayDPExecutor::getBlockLocations,
-        rddId, numPartitions).remote().get();
+      ActorHandle<RayDPExecutor> handler, int rddId, int numPartitions) {
+    return handler.task(RayDPExecutor::getBlockLocations, rddId, numPartitions).remote().get();
   }
 
   public static ObjectRef<byte[]> getRDDPartition(
@@ -90,14 +81,14 @@ public class RayExecutorUtils {
       int partitionId,
       String schema,
       String driverAgentUrl) {
-    return (ObjectRefImpl<byte[]>) handle.task(
-        RayDPExecutor::getRDDPartition,
-        rddId, partitionId, schema, driverAgentUrl).remote();
+    return (ObjectRefImpl<byte[]>)
+        handle.task(RayDPExecutor::getRDDPartition, rddId, partitionId, schema, driverAgentUrl)
+            .remote();
   }
 
-  public static void exitExecutor(
-    ActorHandle<RayDPExecutor> handle
-  ) {
+  public static void exitExecutor(ActorHandle<RayDPExecutor> handle) {
     handle.task(RayDPExecutor::stop).remote();
   }
 }
+
+

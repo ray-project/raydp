@@ -18,7 +18,6 @@
 import pytest
 import sys
 import torch
-import raydp
 from raydp.torch import TorchEstimator
 
 def test_torch_estimator(spark_on_ray_small):
