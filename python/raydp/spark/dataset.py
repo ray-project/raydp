@@ -74,7 +74,12 @@ def _fetch_arrow_table_from_executor(executor_actor_name: str,
         executor_actor.getRDDPartition.remote(
             rdd_id, partition_id, schema_json, driver_agent_url))
     reader = pa.ipc.open_stream(pa.BufferReader(ipc_bytes))
-    return reader.read_all()
+    table = reader.read_all()
+    # Spark's Arrow conversion may attach schema metadata. Ray Data metadata extraction
+    # can be sensitive to unexpected schema metadata in some Ray/PyArrow combinations.
+    # Strip schema metadata to make blocks more portable/deterministic.
+    table = table.replace_schema_metadata()
+    return table
 
 
 class RecordPiece:
