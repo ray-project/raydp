@@ -17,18 +17,10 @@
 
 package org.apache.spark.sql.raydp
 
-import java.io.ByteArrayInputStream
-import java.nio.channels.{Channels, ReadableByteChannel}
 import java.util.List
 
-import com.intel.raydp.shims.SparkShimLoader
-
-import org.apache.spark.api.java.{JavaRDD, JavaSparkContext}
-import org.apache.spark.raydp.RayDPUtils
-import org.apache.spark.rdd.{RayDatasetRDD, RayObjectRefRDD}
-import org.apache.spark.sql.{DataFrame, SparkSession, SQLContext}
-import org.apache.spark.sql.catalyst.expressions.GenericRow
-import org.apache.spark.sql.execution.arrow.ArrowConverters
+import org.apache.spark.rdd.RayObjectRefRDD
+import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.types.{IntegerType, StructType}
 
 object ObjectStoreReader {
@@ -38,20 +30,5 @@ object ObjectStoreReader {
     val rdd = new RayObjectRefRDD(spark.sparkContext, locations)
     val schema = new StructType().add("idx", IntegerType)
     spark.createDataFrame(rdd, schema)
-  }
-
-  def RayDatasetToDataFrame(
-      sparkSession: SparkSession,
-      rdd: RayDatasetRDD,
-      schema: String): DataFrame = {
-    SparkShimLoader.getSparkShims.toDataFrame(JavaRDD.fromRDD(rdd), schema, sparkSession)
-  }
-
-  def getBatchesFromStream(
-      ref: Array[Byte],
-      ownerAddress: Array[Byte]): Iterator[Array[Byte]] = {
-    val objectRef = RayDPUtils.readBinary(ref, classOf[Array[Byte]], ownerAddress)
-    ArrowConverters.getBatchesFromStream(
-        Channels.newChannel(new ByteArrayInputStream(objectRef.get)))
   }
 }

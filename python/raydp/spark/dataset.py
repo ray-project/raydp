@@ -244,20 +244,6 @@ def _convert_by_udf(spark: sql.SparkSession,
     df = blocks_df.mapInPandas(_convert_blocks_to_dataframe, schema)
     return df
 
-def _convert_by_rdd(spark: sql.SparkSession,
-                    blocks: Dataset,
-                    locations: List[bytes],
-                    schema: StructType) -> DataFrame:
-    object_ids = [block.binary() for block in blocks]
-    schema_str = schema.json()
-    jvm = spark.sparkContext._jvm
-    # create rdd in java
-    rdd = jvm.org.apache.spark.rdd.RayDatasetRDD(spark._jsc, object_ids, locations)
-    # convert the rdd to dataframe
-    object_store_reader = jvm.org.apache.spark.sql.raydp.ObjectStoreReader
-    jdf = object_store_reader.RayDatasetToDataFrame(spark._jsparkSession, rdd, schema_str)
-    return DataFrame(jdf, spark._wrapped if hasattr(spark, "_wrapped") else spark)
-
 @client_mode_wrap
 def get_locations(blocks):
     core_worker = ray.worker.global_worker.core_worker
@@ -279,14 +265,7 @@ def ray_dataset_to_spark_dataframe(spark: sql.SparkSession,
     schema = StructType()
     for field in arrow_schema:
         schema.add(field.name, from_arrow_type(field.type), nullable=field.nullable)
-    #TODO how to branch on type of block?
-    sample = ray.get(blocks[0])
-    if isinstance(sample, bytes):
-        return _convert_by_rdd(spark, blocks, locations, schema)
-    elif isinstance(sample, pa.Table):
-        return _convert_by_udf(spark, blocks, locations, schema)
-    else:
-        raise RuntimeError("ray.to_spark only supports arrow type blocks")
+    return _convert_by_udf(spark, blocks, locations, schema)
 
 
 def read_spark_parquet(path: str) -> Dataset:
