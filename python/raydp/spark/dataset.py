@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+import time
 import uuid
 from typing import Callable, List, Optional, Union
 from dataclasses import dataclass
@@ -114,7 +115,12 @@ def spark_dataframe_to_ray_dataset(df: sql.DataFrame,
 def from_spark_recoverable(df: sql.DataFrame,
                            storage_level: StorageLevel = StorageLevel.MEMORY_AND_DISK,
                            parallelism: Optional[int] = None):
-    """Recoverable Spark->Ray conversion that survives executor loss."""
+    """Recoverable Spark->Ray conversion that survives executor loss.
+
+    Materialization and Ray fetching are overlapped: as each Spark partition
+    completes, its Ray fetch task is submitted immediately rather than waiting
+    for all partitions to finish first.
+    """
     num_part = df.rdd.getNumPartitions()
     if parallelism is not None:
         if parallelism != num_part:
@@ -122,15 +128,13 @@ def from_spark_recoverable(df: sql.DataFrame,
     sc = df.sparkSession.sparkContext
     storage_level = sc._getJavaStorageLevel(storage_level)
     object_store_writer = sc._jvm.org.apache.spark.sql.raydp.ObjectStoreWriter
-    # Recoverable conversion for Ray node loss:
-    # - cache Arrow bytes in Spark
-    # - build Ray Dataset blocks via Ray tasks (lineage), each task refetches bytes via JVM actors
-    info = object_store_writer.prepareRecoverableRDD(df._jdf, storage_level)
-    rdd_id = info.rddId()
-    num_partitions = info.numPartitions()
-    schema_json = info.schemaJson()
-    driver_agent_url = info.driverAgentUrl()
-    locations = info.locations()
+
+    # Start materialization in the background; returns a handle we can poll.
+    handle = object_store_writer.startStreamingRecoverableRDD(df._jdf, storage_level)
+    rdd_id = handle.rddId()
+    num_partitions = handle.numPartitions()
+    schema_json = handle.schemaJson()
+    driver_agent_url = handle.driverAgentUrl()
 
     spark_conf = sc.getConf()
     fetch_num_cpus = float(
@@ -138,26 +142,30 @@ def from_spark_recoverable(df: sql.DataFrame,
     fetch_memory_str = spark_conf.get(
         "spark.ray.raydp_recoverable_fetch.task.resource.memory", "0")
     fetch_memory = float(parse_memory_size(fetch_memory_str))
+    task_opts = {"num_cpus": fetch_num_cpus, "memory": fetch_memory}
+    fetch_task = _fetch_arrow_table_from_executor.options(**task_opts)
 
+    # Poll for completed partitions and dispatch Ray fetch tasks as they become ready.
+    refs: List[Optional[ObjectRef]] = [None] * num_partitions
+    dispatched = set()
 
-    refs: List[ObjectRef] = []
-    for i in range(num_partitions):
-        executor_id = locations[i]
-        executor_actor_name = f"raydp-executor-{executor_id}"
-        task_opts = {
-            "num_cpus": fetch_num_cpus,
-            "memory": fetch_memory,
-        }
-        fetch_task = _fetch_arrow_table_from_executor.options(**task_opts)
-        refs.append(
-            fetch_task.remote(
-                executor_actor_name,
-                rdd_id,
-                i,
-                schema_json,
-                driver_agent_url,
-            )
-        )
+    while len(dispatched) < num_partitions:
+        err = handle.getError()
+        if err is not None:
+            raise RuntimeError(f"Spark materialization failed: {err}")
+
+        ready = handle.getReadyPartitions()
+        new_count = 0
+        for i in range(num_partitions):
+            if i not in dispatched and ready[i] is not None:
+                executor_actor_name = f"raydp-executor-{ready[i]}"
+                refs[i] = fetch_task.remote(
+                    executor_actor_name, rdd_id, i, schema_json, driver_agent_url)
+                dispatched.add(i)
+                new_count += 1
+
+        if len(dispatched) < num_partitions and new_count == 0:
+            time.sleep(0.1)
 
     return from_arrow_refs(refs)
 

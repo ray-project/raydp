@@ -21,13 +21,13 @@ import com.intel.raydp.shims.SparkShimLoader
 import io.ray.api.{ActorHandle, Ray}
 import org.apache.arrow.vector.types.pojo.Schema
 
-import org.apache.spark.{RayDPException, SparkContext}
+import org.apache.spark.{RayDPException, SparkContext, SparkEnv}
 import org.apache.spark.deploy.raydp._
 import org.apache.spark.executor.RayDPExecutor
 import org.apache.spark.raydp.RayExecutorUtils
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.storage.StorageLevel
+import org.apache.spark.storage.{BlockId, BlockManager, StorageLevel}
 
 object ObjectStoreWriter {
   var driverAgent: RayDPDriverAgent = _
@@ -99,6 +99,51 @@ object ObjectStoreWriter {
     RecoverableRDDInfo(rdd.id, numPartitions, schemaJson, driverAgentUrl, locations)
   }
 
+  /**
+   * Streaming variant: starts materialization in a background thread and returns
+   * a handle that Python can poll for completed partitions.  This lets Ray fetch
+   * tasks overlap with Spark partition computation instead of blocking on rdd.count().
+   */
+  def startStreamingRecoverableRDD(
+      df: DataFrame,
+      storageLevel: StorageLevel): StreamingRecoverableRDD = {
+    if (!Ray.isInitialized) {
+      throw new RayDPException(
+        "Not yet connected to Ray! Please set fault_tolerant_mode=True when starting RayDP.")
+    }
+
+    val rdd = SparkShimLoader.getSparkShims.toArrowBatchRdd(df)
+    rdd.persist(storageLevel)
+
+    val appMasterHandle = Ray.getActor(RayAppMaster.ACTOR_NAME)
+                             .get.asInstanceOf[ActorHandle[RayAppMaster]]
+    val restartedExecutors = RayAppMasterUtils.getRestartedExecutors(appMasterHandle)
+
+    val schemaJson = ObjectStoreWriter.toArrowSchema(df).toJson
+    val numPartitions = rdd.getNumPartitions
+
+    val handle = new StreamingRecoverableRDD(
+      rdd.id, numPartitions, schemaJson, driverAgentUrl,
+      restartedExecutors, SparkEnv.get)
+
+    // Start materialization in background — partitions become visible via getReadyPartitions()
+    val thread = new Thread("raydp-materialize-" + rdd.id) {
+      setDaemon(true)
+      override def run(): Unit = {
+        try {
+          rdd.count()
+        } catch {
+          case e: Throwable => handle.setError(e)
+        } finally {
+          handle.setComplete()
+        }
+      }
+    }
+    thread.start()
+
+    handle
+  }
+
 }
 
 case class RecoverableRDDInfo(
@@ -111,5 +156,52 @@ case class RecoverableRDDInfo(
 object RecoverableRDDInfo {
   // Empty constructor for reflection / Java interop (some tools expect it).
   def empty: RecoverableRDDInfo = RecoverableRDDInfo(0, 0, "", "", Array.empty[String])
+}
+
+/**
+ * Handle returned by [[ObjectStoreWriter.startStreamingRecoverableRDD]].
+ * Python polls [[getReadyPartitions]] to discover which partitions have been
+ * materialized in Spark's BlockManager, then immediately submits Ray fetch
+ * tasks for those partitions — overlapping Spark computation with Ray transfer.
+ */
+class StreamingRecoverableRDD(
+    val rddId: Int,
+    val numPartitions: Int,
+    val schemaJson: String,
+    val driverAgentUrl: String,
+    private val restartedExecutors: java.util.Map[String, String],
+    private val env: SparkEnv) {
+
+  @volatile private var _error: Throwable = _
+  @volatile private var _complete: Boolean = false
+
+  private val blockIds: Array[BlockId] = (0 until numPartitions).map(i =>
+    BlockId.apply("rdd_" + rddId + "_" + i)
+  ).toArray
+
+  def setError(e: Throwable): Unit = { _error = e }
+  def setComplete(): Unit = { _complete = true }
+
+  def isComplete: Boolean = _complete
+  def getError: String = if (_error != null) _error.getMessage else null
+
+  /**
+   * Returns an Array[String] of length numPartitions.
+   * For materialized partitions: the (mapped) executor ID suitable for Ray actor lookup.
+   * For not-yet-ready partitions: null.
+   */
+  def getReadyPartitions(): Array[String] = {
+    val locations = BlockManager.blockIdsToLocations(blockIds, env)
+    val result = new Array[String](numPartitions)
+    for ((key, value) <- locations if value.nonEmpty) {
+      val partitionId = key.name.substring(key.name.lastIndexOf('_') + 1).toInt
+      var executorId = value(0).substring(value(0).lastIndexOf('_') + 1)
+      if (restartedExecutors.containsKey(executorId)) {
+        executorId = restartedExecutors.get(executorId)
+      }
+      result(partitionId) = executorId
+    }
+    result
+  }
 }
 
