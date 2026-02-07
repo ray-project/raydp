@@ -90,7 +90,7 @@ class XGBoostEstimator(EstimatorInterface, SparkEstimatorInterface):
         train_df = self._check_and_convert(train_df)
         evaluate_ds = None
         if fs_directory is not None:
-            app_id = train_df.sql_ctx.sparkSession.sparkContext.applicationId
+            app_id = train_df.sparkSession.sparkContext.applicationId
             path = fs_directory.rstrip("/") + f"/{app_id}"
             train_df.write.parquet(path+"/train", compression=compression)
             train_ds = read_spark_parquet(path+"/train")
@@ -101,7 +101,7 @@ class XGBoostEstimator(EstimatorInterface, SparkEstimatorInterface):
         else:
             owner = None
             if stop_spark_after_conversion:
-                owner = get_raydp_master_owner(train_df.sql_ctx.sparkSession)
+                owner = get_raydp_master_owner(train_df.sparkSession)
             train_ds = spark_dataframe_to_ray_dataset(train_df,
                                                       parallelism=self._num_workers,
                                                       owner=owner)

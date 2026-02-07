@@ -170,7 +170,7 @@ def from_spark_recoverable(df: sql.DataFrame,
     if parallelism is not None:
         if parallelism != num_part:
             df = df.repartition(parallelism)
-    sc = df.sql_ctx.sparkSession.sparkContext
+    sc = df.sparkSession.sparkContext
     storage_level = sc._getJavaStorageLevel(storage_level)
     object_store_writer = sc._jvm.org.apache.spark.sql.raydp.ObjectStoreWriter
     # Recoverable conversion for Ray node loss:
@@ -226,7 +226,7 @@ def _convert_by_udf(spark: sql.SparkSession,
     jdf = object_store_reader.createRayObjectRefDF(spark._jsparkSession, locations)
     current_namespace = ray.get_runtime_context().namespace
     ray_address = ray.get(holder.get_ray_address.remote())
-    blocks_df = DataFrame(jdf, spark._wrapped if hasattr(spark, "_wrapped") else spark)
+    blocks_df = DataFrame(jdf, spark)
     def _convert_blocks_to_dataframe(blocks):
         # connect to ray
         if not ray.is_initialized():
