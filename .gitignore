@@ -26,3 +26,5 @@ _SUCCESS
 
 .metals/
 .bloop/
+
+.venv/
