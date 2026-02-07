@@ -227,21 +227,22 @@ def _convert_by_udf(spark: sql.SparkSession,
     current_namespace = ray.get_runtime_context().namespace
     ray_address = ray.get(holder.get_ray_address.remote())
     blocks_df = DataFrame(jdf, spark)
-    def _convert_blocks_to_dataframe(blocks):
+    def _convert_blocks_to_batches(batches):
         # connect to ray
         if not ray.is_initialized():
             ray.init(address=ray_address,
                      namespace=current_namespace,
                      logging_level=logging.WARN)
         obj_holder = ray.get_actor(holder_name)
-        for block in blocks:
-            dfs = []
-            for idx in block["idx"]:
+        for batch in batches:
+            indices = batch.column("idx").to_pylist()
+            tables = []
+            for idx in indices:
                 ref = ray.get(obj_holder.get_object.remote(df_id, idx))
-                data = ray.get(ref)
-                dfs.append(data.to_pandas())
-            yield pd.concat(dfs)
-    df = blocks_df.mapInPandas(_convert_blocks_to_dataframe, schema)
+                tables.append(ray.get(ref))
+            combined = pa.concat_tables(tables)
+            yield from combined.to_batches()
+    df = blocks_df.mapInArrow(_convert_blocks_to_batches, schema)
     return df
 
 @client_mode_wrap
