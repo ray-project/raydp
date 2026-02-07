@@ -19,7 +19,6 @@ from typing import Callable, List, Optional, Union
 from dataclasses import dataclass
 
 from packaging import version
-import pandas as pd
 import pyarrow as pa
 import pyspark.sql as sql
 from pyspark.sql import SparkSession
@@ -75,56 +74,6 @@ def _fetch_arrow_table_from_executor(executor_actor_name: str,
             rdd_id, partition_id, schema_json, driver_agent_url))
     reader = pa.ipc.open_stream(pa.BufferReader(ipc_bytes))
     return reader.read_all()
-
-
-class RecordPiece:
-    def __init__(self, row_ids, num_rows: int):
-        self.row_ids = row_ids
-        self.num_rows = num_rows
-
-    def read(self, shuffle: bool) -> pd.DataFrame:
-        raise NotImplementedError
-
-    def with_row_ids(self, new_row_ids) -> "RecordPiece":
-        raise NotImplementedError
-
-    def __len__(self):
-        """Return the number of rows"""
-        return self.num_rows
-
-
-class RayObjectPiece(RecordPiece):
-    def __init__(self,
-                 obj_id: ray.ObjectRef,
-                 row_ids: Optional[List[int]],
-                 num_rows: int):
-        super().__init__(row_ids, num_rows)
-        self.obj_id = obj_id
-
-    def read(self, shuffle: bool) -> pd.DataFrame:
-        data = ray.get(self.obj_id)
-        reader = pa.ipc.open_stream(data)
-        tb = reader.read_all()
-        df: pd.DataFrame = tb.to_pandas()
-        if self.row_ids:
-            df = df.loc[self.row_ids]
-
-        if shuffle:
-            df = df.sample(frac=1.0)
-        return df
-
-    def with_row_ids(self, new_row_ids) -> "RayObjectPiece":
-        """chang the num_rows to the length of new_row_ids. Keep the original size if
-        the new_row_ids is None.
-        """
-
-        if new_row_ids:
-            num_rows = len(new_row_ids)
-        else:
-            num_rows = self.num_rows
-
-        return RayObjectPiece(self.obj_id, new_row_ids, num_rows)
-
 
 
 @dataclass
@@ -240,18 +189,15 @@ def _convert_by_udf(spark: sql.SparkSession,
             for idx in indices:
                 ref = ray.get(obj_holder.get_object.remote(df_id, idx))
                 tables.append(ray.get(ref))
-            combined = pa.concat_tables(tables)
+            combined = tables[0] if len(tables) == 1 else pa.concat_tables(tables)
             yield from combined.to_batches()
     df = blocks_df.mapInArrow(_convert_blocks_to_batches, schema)
     return df
 
 @client_mode_wrap
 def get_locations(blocks):
-    core_worker = ray.worker.global_worker.core_worker
-    return [
-        core_worker.get_owner_address(block)
-        for block in blocks
-    ]
+    core_worker = _ray_global_worker.core_worker
+    return [core_worker.get_owner_address(b) for b in blocks]
 
 def ray_dataset_to_spark_dataframe(spark: sql.SparkSession,
                                    arrow_schema,
