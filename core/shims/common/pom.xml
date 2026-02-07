@@ -7,13 +7,13 @@
   <parent>
     <groupId>com.intel</groupId>
     <artifactId>raydp-shims</artifactId>
-    <version>1.7.0-SNAPSHOT</version>
+    <version>2.0.0-SNAPSHOT</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
 
   <artifactId>raydp-shims-common</artifactId>
   <name>RayDP Shims Common</name>
-  <version>1.7.0-SNAPSHOT</version>
+  <version>2.0.0-SNAPSHOT</version>
   <packaging>jar</packaging>
   
   <build>
@@ -25,7 +25,7 @@
           <plugin>
               <groupId>net.alchim31.maven</groupId>
               <artifactId>scala-maven-plugin</artifactId>
-              <version>3.2.2</version>
+              <version>${scala.plugin.version}</version>
               <executions>
                   <execution>
                       <id>scala-compile-first</id>

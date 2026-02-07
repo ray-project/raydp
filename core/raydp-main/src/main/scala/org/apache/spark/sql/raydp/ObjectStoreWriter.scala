@@ -107,10 +107,10 @@ object ObjectStoreWriter {
     }
     val uuid = dfToId.getOrElseUpdate(df, UUID.randomUUID())
     val queue = ObjectRefHolder.getQueue(uuid)
-    val rdd = df.toArrowBatchRdd
+    val rdd = SparkShimLoader.getSparkShims.toArrowBatchRdd(df)
     rdd.persist(storageLevel)
     rdd.count()
-    var executorIds = df.sqlContext.sparkContext.getExecutorIds.toArray
+    var executorIds = df.sparkSession.sparkContext.getExecutorIds.toArray
     val numExecutors = executorIds.length
     val appMasterHandle = Ray.getActor(RayAppMaster.ACTOR_NAME)
                              .get.asInstanceOf[ActorHandle[RayAppMaster]]
@@ -167,11 +167,11 @@ object ObjectStoreWriter {
         "Not yet connected to Ray! Please set fault_tolerant_mode=True when starting RayDP.")
     }
 
-    val rdd = df.toArrowBatchRdd
+    val rdd = SparkShimLoader.getSparkShims.toArrowBatchRdd(df)
     rdd.persist(storageLevel)
     rdd.count()
 
-    var executorIds = df.sqlContext.sparkContext.getExecutorIds.toArray
+    var executorIds = df.sparkSession.sparkContext.getExecutorIds.toArray
     val numExecutors = executorIds.length
     val appMasterHandle = Ray.getActor(RayAppMaster.ACTOR_NAME)
                              .get.asInstanceOf[ActorHandle[RayAppMaster]]
