@@ -37,7 +37,13 @@ RayDP supports Ray as a Spark resource manager and runs Spark executors in Ray a
 
 ## Installation
 
-You can install latest RayDP using pip. RayDP requires Ray and PySpark. Please also make sure java is installed and JAVA_HOME is set properly.
+RayDP 2.0 requires **Java 17**, **Spark 4.1+**, and **Ray 2.53+**.
+
+**Prerequisites:**
+1.  Install **Java 17**.
+2.  Set `JAVA_HOME` to your Java 17 installation.
+
+You can install the latest RayDP using pip:
 
 ```shell
 pip install raydp
