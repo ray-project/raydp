@@ -35,11 +35,12 @@ object Spark411SQLHelper {
     val conf = df.sparkSession.asInstanceOf[ClassicSparkSession].sessionState.conf
     val timeZoneId = conf.sessionLocalTimeZone
     val maxRecordsPerBatch = conf.getConf(SQLConf.ARROW_EXECUTION_MAX_RECORDS_PER_BATCH)
+    val schema = df.schema
     df.queryExecution.toRdd.mapPartitions(iter => {
       val context = TaskContext.get()
       ArrowConverters.toBatchIterator(
         iter,
-        df.schema,
+        schema,
         maxRecordsPerBatch,
         timeZoneId,
         true, // errorOnDuplicatedFieldNames
