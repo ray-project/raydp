@@ -329,20 +329,21 @@ class RayDPExecutor(
     try {
       val schema = Schema.fromJSON(schemaStr)
       val blockId = BlockId.apply("rdd_" + rddId + "_" + partitionId)
-      val iterator = env.blockManager.get(blockId)(classTag[Array[Byte]]) match {
+      val (iterator, blockBytes) = env.blockManager.get(blockId)(classTag[Array[Byte]]) match {
         case Some(blockResult) =>
-          blockResult.data.asInstanceOf[Iterator[Array[Byte]]]
+          (blockResult.data.asInstanceOf[Iterator[Array[Byte]]], blockResult.bytes)
         case None =>
           logWarning("The cached block has been lost. Cache it again via driver agent")
           requestRecacheRDD(rddId, driverAgentUrl)
           env.blockManager.get(blockId)(classTag[Array[Byte]]) match {
             case Some(blockResult) =>
-              blockResult.data.asInstanceOf[Iterator[Array[Byte]]]
+              (blockResult.data.asInstanceOf[Iterator[Array[Byte]]], blockResult.bytes)
             case None =>
               throw new RayDPException("Still cannot get the block after recache!")
           }
       }
-      val byteOut = new ByteArrayOutputStream()
+      val estimatedSize = Math.max(blockBytes + 1024, 1024).toInt
+      val byteOut = new ByteArrayOutputStream(estimatedSize)
       val writeChannel = new WriteChannel(Channels.newChannel(byteOut))
       MessageSerializer.serialize(writeChannel, schema)
       iterator.foreach(writeChannel.write)

@@ -119,6 +119,12 @@ class SparkCluster(Cluster):
         self._configs["spark.executor.instances"] = str(self._num_executors)
         self._configs["spark.executor.cores"] = str(self._executor_cores)
         self._configs["spark.executor.memory"] = str(self._executor_memory)
+        # Enable Arrow IPC zstd compression by default (Spark 4.1+).
+        # Users can override by passing their own value for this config.
+        arrow_codec_key = "spark.sql.execution.arrow.compression.codec"
+        if arrow_codec_key not in self._configs:
+            self._configs[arrow_codec_key] = "zstd"
+
         if platform.system() != "Darwin":
             driver_node_ip = ray.util.get_node_ip_address()
             if "spark.driver.host" not in self._configs:

@@ -23,8 +23,8 @@ class SparkShims411 extends SparkShims {
     Spark411Helper.getDummyTaskContext(partitionId, env)
   }
 
-  override def toArrowSchema(schema: StructType, timeZoneId: String): Schema = {
-    Spark411SQLHelper.toArrowSchema(schema, timeZoneId)
+  override def toArrowSchema(schema: StructType, timeZoneId: String, largeVarTypes: Boolean = false): Schema = {
+    Spark411SQLHelper.toArrowSchema(schema, timeZoneId, largeVarTypes)
   }
 
   override def toArrowBatchRdd(df: DataFrame): RDD[Array[Byte]] = {

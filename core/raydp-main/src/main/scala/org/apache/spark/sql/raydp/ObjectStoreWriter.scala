@@ -96,7 +96,8 @@ object ObjectStoreWriter {
   def toArrowSchema(df: DataFrame): Schema = {
     val conf = df.queryExecution.sparkSession.sessionState.conf
     val timeZoneId = conf.getConf(SQLConf.SESSION_LOCAL_TIMEZONE)
-    SparkShimLoader.getSparkShims.toArrowSchema(df.schema, timeZoneId)
+    val largeVarTypes = conf.arrowUseLargeVarTypes
+    SparkShimLoader.getSparkShims.toArrowSchema(df.schema, timeZoneId, largeVarTypes)
   }
 
   @deprecated

@@ -27,14 +27,15 @@ import org.apache.spark.api.java.JavaRDD
 import org.apache.spark.sql.classic.{SparkSession => ClassicSparkSession}
 
 object Spark411SQLHelper {
-  def toArrowSchema(schema: StructType, timeZoneId: String): Schema = {
-    ArrowUtils.toArrowSchema(schema, timeZoneId, errorOnDuplicatedFieldNames = true, largeVarTypes = false)
+  def toArrowSchema(schema: StructType, timeZoneId: String, largeVarTypes: Boolean = false): Schema = {
+    ArrowUtils.toArrowSchema(schema, timeZoneId, errorOnDuplicatedFieldNames = true, largeVarTypes = largeVarTypes)
   }
 
   def toArrowBatchRdd(df: DataFrame): org.apache.spark.rdd.RDD[Array[Byte]] = {
     val conf = df.sparkSession.asInstanceOf[ClassicSparkSession].sessionState.conf
     val timeZoneId = conf.sessionLocalTimeZone
     val maxRecordsPerBatch = conf.getConf(SQLConf.ARROW_EXECUTION_MAX_RECORDS_PER_BATCH)
+    val largeVarTypes = conf.arrowUseLargeVarTypes
     val schema = df.schema
     df.queryExecution.toRdd.mapPartitions(iter => {
       val context = TaskContext.get()
@@ -44,7 +45,7 @@ object Spark411SQLHelper {
         maxRecordsPerBatch,
         timeZoneId,
         true, // errorOnDuplicatedFieldNames
-        false, // largeVarTypes
+        largeVarTypes,
         context)
     })
   }
@@ -62,8 +63,9 @@ object Spark411SQLHelper {
     val structType = DataType.fromJson(schema).asInstanceOf[StructType]
     val classicSession = session.asInstanceOf[ClassicSparkSession]
     
-    // Capture timezone on driver side - cannot access sessionState on executors
+    // Capture timezone and largeVarTypes on driver side - cannot access sessionState on executors
     val timeZoneId = classicSession.sessionState.conf.sessionLocalTimeZone
+    val largeVarTypes = classicSession.sessionState.conf.arrowUseLargeVarTypes
 
     // Create an RDD of InternalRow by deserializing Arrow batches per partition
     val rowRdd = rdd.rdd.flatMap { arrowBatch =>
@@ -72,7 +74,7 @@ object Spark411SQLHelper {
         structType,
         timeZoneId,  // Use captured value, not sessionState
         true,  // errorOnDuplicatedFieldNames
-        false, // largeVarTypes
+        largeVarTypes,
         TaskContext.get()
       )
     }

@@ -40,7 +40,7 @@ trait SparkShims {
 
   def getDummyTaskContext(partitionId: Int, env: SparkEnv): TaskContext
 
-  def toArrowSchema(schema : StructType, timeZoneId : String) : Schema
+  def toArrowSchema(schema : StructType, timeZoneId : String, largeVarTypes : Boolean = false) : Schema
 
   def toArrowBatchRdd(df: DataFrame): RDD[Array[Byte]]
 }
