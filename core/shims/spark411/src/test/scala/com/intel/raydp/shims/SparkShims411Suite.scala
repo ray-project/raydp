@@ -6,10 +6,13 @@ import org.scalatest.funsuite.AnyFunSuite
 import java.sql.{Date, Timestamp}
 import java.time.{LocalDate, ZoneId}
 
+import scala.reflect.classTag
+
 import org.apache.arrow.vector.types.pojo.ArrowType
-import org.apache.spark.{SparkEnv, TaskContext}
+import org.apache.spark.{Spark411Helper, SparkEnv, TaskContext}
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.types._
+import org.apache.spark.storage.{RDDBlockId, StorageLevel}
 
 class SparkShims411Suite extends AnyFunSuite with BeforeAndAfterAll {
 
@@ -282,5 +285,88 @@ class SparkShims411Suite extends AnyFunSuite with BeforeAndAfterAll {
     assert(ctx.partitionId() === 42)
     assert(ctx.stageId() === 0)
     assert(ctx.attemptNumber() === 0)
+  }
+
+  test("getDummyTaskContext generates unique taskAttemptIds") {
+    val shim = new SparkShims411()
+    val env = SparkEnv.get
+
+    val ids = (0 until 100).map { i =>
+      shim.getDummyTaskContext(i, env).taskAttemptId()
+    }
+
+    assert(ids.distinct.size === 100, "all taskAttemptIds must be unique")
+    assert(ids.forall(_ >= 1000000L), "taskAttemptIds must start at 1000000+")
+  }
+
+  test("BlockManager.get NPEs without registerTask (regression)") {
+    // This documents the exact NPE bug we fixed: Spark 4.1's BlockInfoManager
+    // requires tasks to be registered before they can acquire read locks.
+    // Setting a TaskContext with a specific taskAttemptId WITHOUT calling
+    // registerTask causes lockForReading to NPE on:
+    //   readLocksByTask.get(taskAttemptId).add(blockId)
+    // Note: if NO TaskContext were set, BlockInfoManager would use the
+    // pre-registered NON_TASK_WRITER (-1024) and no NPE would occur.
+    val env = SparkEnv.get
+    val blockManager = env.blockManager
+
+    // Cache a small RDD to have a block to read
+    val rdd = spark.sparkContext.parallelize(Seq(Array[Byte](1, 2, 3)), 1)
+    rdd.persist(StorageLevel.MEMORY_ONLY)
+    rdd.count() // force materialization
+    val blockId = RDDBlockId(rdd.id, 0)
+
+    // Without registerTask: set TaskContext but do NOT register → NPE
+    val ctx = Spark411Helper.getDummyTaskContext(0, env)
+    Spark411Helper.setTaskContext(ctx)
+    try {
+      val ex = intercept[NullPointerException] {
+        blockManager.get(blockId)(classTag[Array[Byte]])
+      }
+      assert(ex != null)
+    } finally {
+      Spark411Helper.unsetTaskContext()
+    }
+
+    rdd.unpersist(blocking = true)
+  }
+
+  test("BlockManager.get succeeds with registerTask and cleanup") {
+    // Full lifecycle test mirroring RayDPExecutor.getRDDPartition:
+    // register task → read block → release locks → unset context
+    val env = SparkEnv.get
+    val blockManager = env.blockManager
+
+    val rdd = spark.sparkContext.parallelize(Seq(Array[Byte](10, 20, 30)), 1)
+    rdd.persist(StorageLevel.MEMORY_ONLY)
+    rdd.count()
+    val blockId = RDDBlockId(rdd.id, 0)
+
+    val ctx = Spark411Helper.getDummyTaskContext(0, env)
+    Spark411Helper.setTaskContext(ctx)
+    val taskAttemptId = ctx.taskAttemptId()
+    blockManager.registerTask(taskAttemptId)
+    try {
+      val result = blockManager.get(blockId)(classTag[Array[Byte]])
+      assert(result.isDefined, "block should be readable after registerTask")
+    } finally {
+      blockManager.releaseAllLocksForTask(taskAttemptId)
+      Spark411Helper.unsetTaskContext()
+    }
+
+    // Verify lock was released: a second task can also read the same block
+    val ctx2 = Spark411Helper.getDummyTaskContext(0, env)
+    Spark411Helper.setTaskContext(ctx2)
+    val taskAttemptId2 = ctx2.taskAttemptId()
+    blockManager.registerTask(taskAttemptId2)
+    try {
+      val result2 = blockManager.get(blockId)(classTag[Array[Byte]])
+      assert(result2.isDefined, "block should be readable by a second task after cleanup")
+    } finally {
+      blockManager.releaseAllLocksForTask(taskAttemptId2)
+      Spark411Helper.unsetTaskContext()
+    }
+
+    rdd.unpersist(blocking = true)
   }
 }

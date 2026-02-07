@@ -23,8 +23,10 @@ import org.apache.spark.resource.ResourceProfile
 import org.apache.spark.rpc.RpcEnv
 
 import java.net.URL
+import java.util.concurrent.atomic.AtomicLong
 
 object Spark411Helper {
+  private val nextTaskAttemptId = new AtomicLong(1000000L)
   def getExecutorBackendFactory(): RayDPExecutorBackendFactory = {
     new RayDPExecutorBackendFactory {
       override def createExecutorBackend(
@@ -53,15 +55,20 @@ object Spark411Helper {
     }
   }
 
+  def setTaskContext(ctx: TaskContext): Unit = TaskContext.setTaskContext(ctx)
+
+  def unsetTaskContext(): Unit = TaskContext.unset()
+
   def getDummyTaskContext(partitionId: Int, env: SparkEnv): TaskContext = {
+    val taskAttemptId = nextTaskAttemptId.getAndIncrement()
     new TaskContextImpl(
       stageId = 0,
       stageAttemptNumber = 0,
       partitionId = partitionId,
-      taskAttemptId = 0,
+      taskAttemptId = taskAttemptId,
       attemptNumber = 0,
       numPartitions = 0,
-      taskMemoryManager = new TaskMemoryManager(env.memoryManager, 0),
+      taskMemoryManager = new TaskMemoryManager(env.memoryManager, taskAttemptId),
       localProperties = new java.util.Properties,
       metricsSystem = env.metricsSystem,
       taskMetrics = TaskMetrics.empty,
