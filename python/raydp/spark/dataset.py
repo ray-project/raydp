@@ -185,10 +185,10 @@ def _convert_by_udf(spark: sql.SparkSession,
         obj_holder = ray.get_actor(holder_name)
         for batch in batches:
             indices = batch.column("idx").to_pylist()
-            tables = []
-            for idx in indices:
-                ref = ray.get(obj_holder.get_object.remote(df_id, idx))
-                tables.append(ray.get(ref))
+            # Batch both actor lookups and data fetches so Ray can pipeline them
+            ref_futures = [obj_holder.get_object.remote(df_id, idx) for idx in indices]
+            refs = ray.get(ref_futures)
+            tables = ray.get(list(refs))
             combined = tables[0] if len(tables) == 1 else pa.concat_tables(tables)
             yield from combined.to_batches()
     df = blocks_df.mapInArrow(_convert_blocks_to_batches, schema)

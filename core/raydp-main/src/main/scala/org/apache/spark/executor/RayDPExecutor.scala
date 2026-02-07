@@ -342,15 +342,29 @@ class RayDPExecutor(
               throw new RayDPException("Still cannot get the block after recache!")
           }
       }
-      val estimatedSize = Math.max(blockBytes + 1024, 1024).toInt
-      val byteOut = new ByteArrayOutputStream(estimatedSize)
-      val writeChannel = new WriteChannel(Channels.newChannel(byteOut))
-      MessageSerializer.serialize(writeChannel, schema)
-      iterator.foreach(writeChannel.write)
-      ArrowStreamWriter.writeEndOfStream(writeChannel, new IpcOption)
-      val result = byteOut.toByteArray
-      writeChannel.close
-      byteOut.close
+      // Collect batch byte arrays (references only; data already in memory from BlockManager)
+      val batches = iterator.toArray
+
+      // Serialize schema header and EOS marker into small temp buffers
+      val schemaBuf = new ByteArrayOutputStream(512)
+      MessageSerializer.serialize(new WriteChannel(Channels.newChannel(schemaBuf)), schema)
+      val schemaBytes = schemaBuf.toByteArray
+
+      val eosBuf = new ByteArrayOutputStream(16)
+      ArrowStreamWriter.writeEndOfStream(new WriteChannel(Channels.newChannel(eosBuf)), new IpcOption)
+      val eosBytes = eosBuf.toByteArray
+
+      // Single allocation: copy schema + batches + EOS directly (avoids BAOS + toByteArray double-copy)
+      val totalSize = schemaBytes.length + batches.map(_.length.toLong).sum + eosBytes.length
+      val result = new Array[Byte](totalSize.toInt)
+      var offset = 0
+      System.arraycopy(schemaBytes, 0, result, offset, schemaBytes.length)
+      offset += schemaBytes.length
+      batches.foreach { batch =>
+        System.arraycopy(batch, 0, result, offset, batch.length)
+        offset += batch.length
+      }
+      System.arraycopy(eosBytes, 0, result, offset, eosBytes.length)
       result
     } finally {
       env.blockManager.releaseAllLocksForTask(taskAttemptId)
