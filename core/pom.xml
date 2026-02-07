@@ -13,7 +13,7 @@
   <url>https://github.com/ray-project/raydp.git</url>
 
   <properties>
-    <ray.version>2.34.0</ray.version>
+    <ray.version>2.47.1</ray.version>
     <spark.version>4.1.1</spark.version>
     <spark322.version>3.2.2</spark322.version>
     <spark330.version>3.3.0</spark330.version>
