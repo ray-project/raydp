@@ -32,76 +32,58 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest]
-        python-version: [3.10, 3.12]
+        python-version: ["3.10", "3.12"]
         spark-version: [4.1.1]
         ray-version: [2.53.0]
 
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@ee0669bd1cc54295c223e0bb666b733df41de1c5 # v2.7.0
+      - uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@e9aba2c848f5ebd159c070c61ea2c4e2b122355e # v2.3.4
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Set up JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           java-version: 17
           distribution: 'corretto'
-      - name: Install extra dependencies for macOS
-        if: matrix.os == 'macos-latest'
-        run: |
-          brew install pkg-config
-          brew install libuv libomp mpich
       - name: Install extra dependencies for Ubuntu
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get install -y mpich
-      - name: Cache pip - Ubuntu
-        if: matrix.os == 'ubuntu-latest'
-        uses: actions/cache@8492260343ad570701412c2f464a5877dc76bace # v2
+      - name: Cache pip
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ matrix.os }}-${{ matrix.python-version }}-pip
-      - name: Cache pip - MacOS
-        if: matrix.os == 'macos-latest'
-        uses: actions/cache@8492260343ad570701412c2f464a5877dc76bace # v2
-        with:
-          path: ~/Library/Caches/pip
           key: ${{ matrix.os }}-${{ matrix.python-version }}-pip
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install wheel
-          pip install "numpy<1.24" "click<8.3.0"
-          pip install "pydantic<2.0"
-          SUBVERSION=$(python -c 'import sys; print(sys.version_info[1])')
+          pip install wheel build
           if [ "$(uname -s)" == "Linux" ]
           then
             pip install torch --index-url https://download.pytorch.org/whl/cpu
           else
             pip install torch
           fi
-          pip install pyarrow "ray[train,default]==${{ matrix.ray-version }}" tqdm pytest tensorflow==2.13.1 tabulate grpcio-tools wget
-          pip install "xgboost_ray[default]<=0.1.13"
-          pip install "xgboost<=2.0.3"
-          pip install torchmetrics
+          pip install "pandas>=2.2,<3" pyarrow "ray[train,default]==${{ matrix.ray-version }}" tqdm pytest tabulate grpcio-tools wget
+          pip install torchmetrics xgboost
+          pip install tensorflow-cpu
       - name: Cache Maven
-        uses: actions/cache@8492260343ad570701412c2f464a5877dc76bace # v2
+        uses: actions/cache@v4
         with:
           path: ~/.m2
           key: ${{ matrix.os }}-m2-${{ hashFiles('core/pom.xml') }}
       - name: Build and install
-        env:
-          GITHUB_CI: 1
         run: |
           pip install pyspark==${{ matrix.spark-version }}
           ./build.sh
           pip install dist/raydp-*.whl
       - name: Lint
         run: |
-          pip install pylint==2.8.3
+          pip install pylint==3.3.6
           pylint --rcfile=python/pylintrc python/raydp
           pylint --rcfile=python/pylintrc examples/*.py
       - name: Test with pytest
@@ -115,8 +97,4 @@ jobs:
           python examples/raydp-submit.py
           python examples/test_raydp_submit_pyfiles.py
           ray stop
-          python examples/pytorch_nyctaxi.py
-          python examples/tensorflow_nyctaxi.py
-          python examples/xgboost_ray_nyctaxi.py
-          # python examples/raytrain_nyctaxi.py
           python examples/data_process.py

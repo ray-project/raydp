@@ -28,18 +28,5 @@ dependencies = [
     "protobuf > 3.19.5"
 ]
 
-[tool.setuptools]
-packages = ["raydp", "raydp.jars", "raydp.bin"]
-include-package-data = true
-
-[tool.setuptools.package-dir]
-"raydp.jars" = "deps/jars"
-"raydp.bin" = "deps/bin"
-"mpi_network_proto" = "raydp/mpi/network"
-
-[tool.setuptools.package-data]
-"raydp.jars" = ["*.jar"]
-"raydp.bin" = ["raydp-submit"]
-
 [tool.setuptools.dynamic]
 version = {attr = "setup.VERSION"}
