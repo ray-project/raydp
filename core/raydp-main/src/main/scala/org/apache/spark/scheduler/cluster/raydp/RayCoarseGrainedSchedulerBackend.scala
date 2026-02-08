@@ -21,7 +21,7 @@ import java.net.URI
 import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
 
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 import scala.collection.mutable.HashMap
 import scala.concurrent.Future
 
@@ -89,7 +89,7 @@ class RayCoarseGrainedSchedulerBackend(
 
         val appMasterResources = conf.getAll.filter {
           case (k, v) => k.startsWith(SparkOnRayConfigs.SPARK_MASTER_ACTOR_RESOURCE_PREFIX)
-        }.map{ case (k, v) => k->double2Double(v.toDouble) }
+        }.map{ case (k, v) => k->Double.box(v.toDouble) }
 
         masterHandle = RayAppMasterUtils.createAppMaster(cp, null, options.toBuffer.asJava,
           appMasterResources.toMap.asJava)
@@ -154,14 +154,13 @@ class RayCoarseGrainedSchedulerBackend(
     }
 
     // Start executors with a few necessary configs for registering with the scheduler
-    val sparkJavaOpts = Utils.sparkJavaOpts(conf, SparkConf.isExecutorStartupConf)
     // add Xmx, it should not be set in java opts, because Spark is not allowed.
     // We also add Xms to ensure the Xmx >= Xms
     val memoryLimit = Seq(s"-Xms${sc.executorMemory}M", s"-Xmx${sc.executorMemory}M")
 
-    val javaOpts = sparkJavaOpts ++ extraJavaOpts ++ memoryLimit ++ javaAgentOpt()
+    val javaOpts = extraJavaOpts ++ memoryLimit ++ javaAgentOpt()
 
-    val command = Command(driverUrl, sc.executorEnvs,
+    val command = Command(driverUrl, sc.executorEnvs.toMap,
       classPathEntries ++ testingClassPath, libraryPathEntries, javaOpts)
     val coresPerExecutor = conf.getOption(config.EXECUTOR_CORES.key).map(_.toInt)
 
@@ -250,7 +249,7 @@ class RayCoarseGrainedSchedulerBackend(
       } catch {
         case e: Exception =>
           logWarning("Failed to connect to app master", e)
-          stop()
+          RayCoarseGrainedSchedulerBackend.this.stop()
       }
     }
 

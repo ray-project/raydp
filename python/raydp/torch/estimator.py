@@ -30,11 +30,9 @@ from raydp import stop_spark
 from raydp.spark import spark_dataframe_to_ray_dataset, get_raydp_master_owner
 from raydp.spark.dataset import read_spark_parquet
 from raydp.torch.config import TorchConfig
-from ray import train
-from ray.train import Checkpoint
-from ray.train.torch import TorchTrainer, TorchCheckpoint
-from ray.air.config import ScalingConfig, RunConfig, FailureConfig
-from ray.air import session
+import ray.train
+from ray.train import Checkpoint, ScalingConfig, RunConfig, FailureConfig
+from ray.train.torch import TorchTrainer
 from ray.data.dataset import Dataset
 from ray.tune.search.sample import Domain
 
@@ -223,7 +221,7 @@ class TorchEstimator(EstimatorInterface, SparkEstimatorInterface):
         metrics = config["metrics"]
 
         # create dataset
-        train_data_shard = session.get_dataset_shard("train")
+        train_data_shard = ray.train.get_dataset_shard("train")
         train_dataset = train_data_shard.to_torch(feature_columns=config["feature_columns"],
                                                 feature_column_dtypes=config["feature_types"],
                                                 label_column=config["label_column"],
@@ -231,7 +229,7 @@ class TorchEstimator(EstimatorInterface, SparkEstimatorInterface):
                                                 batch_size=config["batch_size"],
                                                 drop_last=config["drop_last"])
         if config["evaluate"]:
-            evaluate_data_shard = session.get_dataset_shard("evaluate")
+            evaluate_data_shard = ray.train.get_dataset_shard("evaluate")
             evaluate_dataset = evaluate_data_shard.to_torch(
                                                     feature_columns=config["feature_columns"],
                                                     label_column=config["label_column"],
@@ -240,16 +238,16 @@ class TorchEstimator(EstimatorInterface, SparkEstimatorInterface):
                                                     batch_size=config["batch_size"],
                                                     drop_last=config["drop_last"])
 
-        model = train.torch.prepare_model(model)
+        model = ray.train.torch.prepare_model(model)
         loss_results = []
         for epoch in range(config["num_epochs"]):
             train_res, train_loss = TorchEstimator.train_epoch(train_dataset, model, loss,
                                                                 optimizer, metrics, lr_scheduler)
-            session.report(dict(epoch=epoch, train_res=train_res, train_loss=train_loss))
+            ray.train.report(dict(epoch=epoch, train_res=train_res, train_loss=train_loss))
             if config["evaluate"]:
                 eval_res, evaluate_loss = TorchEstimator.evaluate_epoch(evaluate_dataset,
                                                                             model, loss, metrics)
-                session.report(dict(epoch=epoch, eval_res=eval_res, test_loss=evaluate_loss))
+                ray.train.report(dict(epoch=epoch, eval_res=eval_res, test_loss=evaluate_loss))
                 loss_results.append(evaluate_loss)
         if hasattr(model, "module"):
             states = model.module.state_dict()
@@ -260,14 +258,14 @@ class TorchEstimator(EstimatorInterface, SparkEstimatorInterface):
             checkpoint = None
             # In standard DDP training, where the model is the same across all ranks,
             # only the global rank 0 worker needs to save and report the checkpoint
-            if train.get_context().get_world_rank() == 0:
+            if ray.train.get_context().get_world_rank() == 0:
                 torch.save(
                     states,
                     os.path.join(temp_checkpoint_dir, "model.pt"),
                 )
                 checkpoint = Checkpoint.from_directory(temp_checkpoint_dir)
 
-            session.report({}, checkpoint=checkpoint)
+            ray.train.report({}, checkpoint=checkpoint)
 
     @staticmethod
     def train_epoch(dataset, model, criterion, optimizer, metrics, scheduler=None):
@@ -366,7 +364,7 @@ class TorchEstimator(EstimatorInterface, SparkEstimatorInterface):
         train_df = self._check_and_convert(train_df)
         evaluate_ds = None
         if fs_directory is not None:
-            app_id = train_df.sql_ctx.sparkSession.sparkContext.applicationId
+            app_id = train_df.sparkSession.sparkContext.applicationId
             path = fs_directory.rstrip("/") + f"/{app_id}"
             train_df.write.parquet(path+"/train", compression=compression)
             train_ds = read_spark_parquet(path+"/train")
@@ -377,7 +375,7 @@ class TorchEstimator(EstimatorInterface, SparkEstimatorInterface):
         else:
             owner = None
             if stop_spark_after_conversion:
-                owner = get_raydp_master_owner(train_df.sql_ctx.sparkSession)
+                owner = get_raydp_master_owner(train_df.sparkSession)
             train_ds = spark_dataframe_to_ray_dataset(train_df,
                                                       owner=owner)
             if evaluate_df is not None:
@@ -391,6 +389,14 @@ class TorchEstimator(EstimatorInterface, SparkEstimatorInterface):
 
     def get_model(self):
         assert self._trainer is not None, "Must call fit first"
-        return TorchCheckpoint(
-                self._trained_results.checkpoint.to_directory()
-            ).get_model(self._model)
+        checkpoint_dir = self._trained_results.checkpoint.to_directory()
+        state_dict = torch.load(os.path.join(checkpoint_dir, "model.pt"), weights_only=True)
+        if isinstance(self._model, torch.nn.Module):
+            self._model.load_state_dict(state_dict)
+            return self._model
+        elif callable(self._model):
+            model = self._model({})
+            model.load_state_dict(state_dict)
+            return model
+        else:
+            raise ValueError("Cannot load model: unsupported model type")

@@ -15,20 +15,22 @@
 # limitations under the License.
 #
 
+import os
 from packaging import version
 import platform
 import tempfile
 from typing import Any, Dict, List, NoReturn, Optional, Union
+
+import numpy as np
 
 import tensorflow as tf
 import tensorflow.keras as keras
 from tensorflow.keras.callbacks import Callback
 
 import ray
-from ray.air import session
-from ray.air.config import ScalingConfig, RunConfig, FailureConfig
-from ray.train import Checkpoint
-from ray.train.tensorflow import TensorflowCheckpoint, TensorflowTrainer
+import ray.train
+from ray.train import ScalingConfig, RunConfig, FailureConfig, Checkpoint
+from ray.train.tensorflow import TensorflowTrainer
 from ray.data.dataset import Dataset
 from ray.data.preprocessors import Concatenator
 
@@ -169,45 +171,52 @@ class TFEstimator(EstimatorInterface, SparkEstimatorInterface):
         return model
 
     @staticmethod
-    def train_func(config):
-        strategy = tf.distribute.MultiWorkerMirroredStrategy()
-        with strategy.scope():
-            # Model building/compiling need to be within `strategy.scope()`.
-            multi_worker_model = TFEstimator.build_and_compile_model(config)
+    def _materialize_tf_dataset(data_iter, feature_cols, label_cols,
+                                batch_size, drop_last):
+        """Materialize a Ray DataIterator into a finite tf.data.Dataset."""
+        batches = list(data_iter.iter_batches(batch_format="numpy"))
+        def _concat(col):
+            if isinstance(col, str):
+                return np.concatenate([b[col] for b in batches])
+            return {c: np.concatenate([b[c] for b in batches]) for c in col}
+        ds = tf.data.Dataset.from_tensor_slices(
+            (_concat(feature_cols), _concat(label_cols)))
+        return ds.batch(batch_size, drop_remainder=drop_last)
 
-        train_dataset = session.get_dataset_shard("train")
-        train_tf_dataset = train_dataset.to_tf(
-            feature_columns=config["feature_columns"],
-            label_columns=config["label_columns"],
-            batch_size=config["batch_size"],
-            drop_last=config["drop_last"]
-        )
+    @staticmethod
+    def train_func(config):
+        # NOTE: MultiWorkerMirroredStrategy is incompatible with Keras 3
+        # (PerReplica conversion error). See:
+        #   https://github.com/keras-team/keras/issues/20585
+        #   https://github.com/ray-project/ray/issues/47464
+        # Each Ray worker trains independently on its data shard instead.
+        model = TFEstimator.build_and_compile_model(config)
+
+        train_tf_dataset = TFEstimator._materialize_tf_dataset(
+            ray.train.get_dataset_shard("train"),
+            config["feature_columns"], config["label_columns"],
+            config["batch_size"], config["drop_last"])
         if config["evaluate"]:
-            eval_dataset = session.get_dataset_shard("evaluate")
-            eval_tf_dataset = eval_dataset.to_tf(
-                feature_columns=config["feature_columns"],
-                label_columns=config["label_columns"],
-                batch_size=config["batch_size"],
-                drop_last=config["drop_last"]
-            )
+            eval_tf_dataset = TFEstimator._materialize_tf_dataset(
+                ray.train.get_dataset_shard("evaluate"),
+                config["feature_columns"], config["label_columns"],
+                config["batch_size"], config["drop_last"])
         results = []
         callbacks = config["callbacks"]
         for _ in range(config["num_epochs"]):
-            train_history = multi_worker_model.fit(train_tf_dataset, callbacks=callbacks)
+            train_history = model.fit(train_tf_dataset, callbacks=callbacks)
             results.append(train_history.history)
             if config["evaluate"]:
-                test_history = multi_worker_model.evaluate(eval_tf_dataset, callbacks=callbacks)
+                test_history = model.evaluate(eval_tf_dataset, callbacks=callbacks)
                 results.append(test_history)
 
-        # Only save checkpoint from the chief worker to avoid race conditions.
-        # However, we need to call save on all workers to avoid deadlock.
         with tempfile.TemporaryDirectory() as temp_checkpoint_dir:
-            multi_worker_model.save(temp_checkpoint_dir, save_format="tf")
+            model.save(os.path.join(temp_checkpoint_dir, "model.keras"))
             checkpoint = None
-            if session.get_world_rank() == 0:
+            if ray.train.get_context().get_world_rank() == 0:
                 checkpoint = Checkpoint.from_directory(temp_checkpoint_dir)
 
-            session.report({}, checkpoint=checkpoint)
+            ray.train.report({}, checkpoint=checkpoint)
 
     def fit(self,
             train_ds: Dataset,
@@ -280,7 +289,7 @@ class TFEstimator(EstimatorInterface, SparkEstimatorInterface):
         train_df = self._check_and_convert(train_df)
         evaluate_ds = None
         if fs_directory is not None:
-            app_id = train_df.sql_ctx.sparkSession.sparkContext.applicationId
+            app_id = train_df.sparkSession.sparkContext.applicationId
             path = fs_directory.rstrip("/") + f"/{app_id}"
             train_df.write.parquet(path+"/train", compression=compression)
             train_ds = read_spark_parquet(path+"/train")
@@ -291,7 +300,7 @@ class TFEstimator(EstimatorInterface, SparkEstimatorInterface):
         else:
             owner = None
             if stop_spark_after_conversion:
-                owner = get_raydp_master_owner(train_df.sql_ctx.sparkSession)
+                owner = get_raydp_master_owner(train_df.sparkSession)
             train_ds = spark_dataframe_to_ray_dataset(train_df,
                                                     owner=owner)
             if evaluate_df is not None:
@@ -305,6 +314,5 @@ class TFEstimator(EstimatorInterface, SparkEstimatorInterface):
 
     def get_model(self) -> Any:
         assert self._trainer, "Trainer has not been created"
-        return TensorflowCheckpoint.from_saved_model(
-                self._results.checkpoint.to_directory()
-            ).get_model()
+        checkpoint_dir = self._results.checkpoint.to_directory()
+        return keras.models.load_model(os.path.join(checkpoint_dir, "model.keras"))

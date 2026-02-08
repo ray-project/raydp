@@ -18,50 +18,20 @@
 package org.apache.spark.sql.raydp
 
 import com.intel.raydp.shims.SparkShimLoader
-import io.ray.api.{ActorHandle, ObjectRef, Ray}
-import io.ray.runtime.AbstractRayRuntime
-import java.util.{List, UUID}
-import java.util.concurrent.{ConcurrentHashMap, ConcurrentLinkedQueue}
-import java.util.function.{Function => JFunction}
+import io.ray.api.{ActorHandle, Ray}
 import org.apache.arrow.vector.types.pojo.Schema
-import scala.collection.JavaConverters._
-import scala.collection.mutable
 
-import org.apache.spark.{RayDPException, SparkContext}
+import org.apache.spark.{RayDPException, SparkContext, SparkEnv}
 import org.apache.spark.deploy.raydp._
 import org.apache.spark.executor.RayDPExecutor
-import org.apache.spark.network.util.JavaUtils
-import org.apache.spark.raydp.{RayDPUtils, RayExecutorUtils}
+import org.apache.spark.raydp.RayExecutorUtils
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.storage.StorageLevel
-
-class ObjectStoreWriter(@transient val df: DataFrame) extends Serializable {
-
-  val uuid: UUID = ObjectStoreWriter.dfToId.getOrElseUpdate(df, UUID.randomUUID())
-
-  /**
-   * For test.
-   */
-  def getRandomRef(): List[Array[Byte]] = {
-
-    df.queryExecution.toRdd.mapPartitions { _ =>
-      Iterator(ObjectRefHolder.getRandom(uuid))
-    }.collect().toSeq.asJava
-  }
-
-  def clean(): Unit = {
-    ObjectStoreWriter.dfToId.remove(df)
-    ObjectRefHolder.removeQueue(uuid)
-  }
-
-}
+import org.apache.spark.storage.{BlockId, BlockManager, StorageLevel}
 
 object ObjectStoreWriter {
-  val dfToId = new mutable.HashMap[DataFrame, UUID]()
   var driverAgent: RayDPDriverAgent = _
   var driverAgentUrl: String = _
-  var address: Array[Byte] = null
 
   def connectToRay(): Unit = {
     if (!Ray.isInitialized) {
@@ -73,80 +43,11 @@ object ObjectStoreWriter {
     }
   }
 
-  private def parseMemoryBytes(value: String): Double = {
-    if (value == null || value.isEmpty) {
-      0.0
-    } else {
-      // Spark parser supports both plain numbers (bytes) and strings like "100M", "2g".
-      JavaUtils.byteStringAsBytes(value).toDouble
-    }
-  }
-
-  def getAddress(): Array[Byte] = {
-    if (address == null) {
-      val objectRef = Ray.put(1)
-      val objectRefImpl = RayDPUtils.convert(objectRef)
-      val objectId = objectRefImpl.getId
-      val runtime = Ray.internal.asInstanceOf[AbstractRayRuntime]
-      address = runtime.getObjectStore.getOwnershipInfo(objectId)
-    }
-    address
-  }
-
   def toArrowSchema(df: DataFrame): Schema = {
     val conf = df.queryExecution.sparkSession.sessionState.conf
     val timeZoneId = conf.getConf(SQLConf.SESSION_LOCAL_TIMEZONE)
-    SparkShimLoader.getSparkShims.toArrowSchema(df.schema, timeZoneId)
-  }
-
-  @deprecated
-  def fromSparkRDD(df: DataFrame, storageLevel: StorageLevel): Array[Array[Byte]] = {
-    if (!Ray.isInitialized) {
-      throw new RayDPException(
-        "Not yet connected to Ray! Please set fault_tolerant_mode=True when starting RayDP.")
-    }
-    val uuid = dfToId.getOrElseUpdate(df, UUID.randomUUID())
-    val queue = ObjectRefHolder.getQueue(uuid)
-    val rdd = df.toArrowBatchRdd
-    rdd.persist(storageLevel)
-    rdd.count()
-    var executorIds = df.sqlContext.sparkContext.getExecutorIds.toArray
-    val numExecutors = executorIds.length
-    val appMasterHandle = Ray.getActor(RayAppMaster.ACTOR_NAME)
-                             .get.asInstanceOf[ActorHandle[RayAppMaster]]
-    val restartedExecutors = RayAppMasterUtils.getRestartedExecutors(appMasterHandle)
-    // Check if there is any restarted executors
-    if (!restartedExecutors.isEmpty) {
-      // If present, need to use the old id to find ray actors
-      for (i <- 0 until numExecutors) {
-        if (restartedExecutors.containsKey(executorIds(i))) {
-          val oldId = restartedExecutors.get(executorIds(i))
-          executorIds(i) = oldId
-        }
-      }
-    }
-    val schema = ObjectStoreWriter.toArrowSchema(df).toJson
-    val numPartitions = rdd.getNumPartitions
-    val results = new Array[Array[Byte]](numPartitions)
-    val refs = new Array[ObjectRef[Array[Byte]]](numPartitions)
-    val handles = executorIds.map {id =>
-      Ray.getActor("raydp-executor-" + id)
-         .get
-         .asInstanceOf[ActorHandle[RayDPExecutor]]
-    }
-    val handlesMap = (executorIds zip handles).toMap
-    val locations = RayExecutorUtils.getBlockLocations(
-        handles(0), rdd.id, numPartitions)
-    for (i <- 0 until numPartitions) {
-      // TODO use getPreferredLocs, but we don't have a host ip to actor table now
-      refs(i) = RayExecutorUtils.getRDDPartition(
-          handlesMap(locations(i)), rdd.id, i, schema, driverAgentUrl)
-      queue.add(refs(i))
-    }
-    for (i <- 0 until numPartitions) {
-      results(i) = RayDPUtils.convert(refs(i)).getId.getBytes
-    }
-    results
+    val largeVarTypes = conf.arrowUseLargeVarTypes
+    SparkShimLoader.getSparkShims.toArrowSchema(df.schema, timeZoneId, largeVarTypes)
   }
 
   /**
@@ -167,11 +68,11 @@ object ObjectStoreWriter {
         "Not yet connected to Ray! Please set fault_tolerant_mode=True when starting RayDP.")
     }
 
-    val rdd = df.toArrowBatchRdd
+    val rdd = SparkShimLoader.getSparkShims.toArrowBatchRdd(df)
     rdd.persist(storageLevel)
     rdd.count()
 
-    var executorIds = df.sqlContext.sparkContext.getExecutorIds.toArray
+    var executorIds = df.sparkSession.sparkContext.getExecutorIds.toArray
     val numExecutors = executorIds.length
     val appMasterHandle = Ray.getActor(RayAppMaster.ACTOR_NAME)
                              .get.asInstanceOf[ActorHandle[RayAppMaster]]
@@ -198,6 +99,51 @@ object ObjectStoreWriter {
     RecoverableRDDInfo(rdd.id, numPartitions, schemaJson, driverAgentUrl, locations)
   }
 
+  /**
+   * Streaming variant: starts materialization in a background thread and returns
+   * a handle that Python can poll for completed partitions.  This lets Ray fetch
+   * tasks overlap with Spark partition computation instead of blocking on rdd.count().
+   */
+  def startStreamingRecoverableRDD(
+      df: DataFrame,
+      storageLevel: StorageLevel): StreamingRecoverableRDD = {
+    if (!Ray.isInitialized) {
+      throw new RayDPException(
+        "Not yet connected to Ray! Please set fault_tolerant_mode=True when starting RayDP.")
+    }
+
+    val rdd = SparkShimLoader.getSparkShims.toArrowBatchRdd(df)
+    rdd.persist(storageLevel)
+
+    val appMasterHandle = Ray.getActor(RayAppMaster.ACTOR_NAME)
+                             .get.asInstanceOf[ActorHandle[RayAppMaster]]
+    val restartedExecutors = RayAppMasterUtils.getRestartedExecutors(appMasterHandle)
+
+    val schemaJson = ObjectStoreWriter.toArrowSchema(df).toJson
+    val numPartitions = rdd.getNumPartitions
+
+    val handle = new StreamingRecoverableRDD(
+      rdd.id, numPartitions, schemaJson, driverAgentUrl,
+      restartedExecutors, SparkEnv.get)
+
+    // Start materialization in background — partitions become visible via getReadyPartitions()
+    val thread = new Thread("raydp-materialize-" + rdd.id) {
+      setDaemon(true)
+      override def run(): Unit = {
+        try {
+          rdd.count()
+        } catch {
+          case e: Throwable => handle.setError(e)
+        } finally {
+          handle.setComplete()
+        }
+      }
+    }
+    thread.start()
+
+    handle
+  }
+
 }
 
 case class RecoverableRDDInfo(
@@ -212,43 +158,50 @@ object RecoverableRDDInfo {
   def empty: RecoverableRDDInfo = RecoverableRDDInfo(0, 0, "", "", Array.empty[String])
 }
 
-object ObjectRefHolder {
-  type Queue = ConcurrentLinkedQueue[ObjectRef[Array[Byte]]]
-  private val dfToQueue = new ConcurrentHashMap[UUID, Queue]()
+/**
+ * Handle returned by [[ObjectStoreWriter.startStreamingRecoverableRDD]].
+ * Python polls [[getReadyPartitions]] to discover which partitions have been
+ * materialized in Spark's BlockManager, then immediately submits Ray fetch
+ * tasks for those partitions — overlapping Spark computation with Ray transfer.
+ */
+class StreamingRecoverableRDD(
+    val rddId: Int,
+    val numPartitions: Int,
+    val schemaJson: String,
+    val driverAgentUrl: String,
+    private val restartedExecutors: java.util.Map[String, String],
+    private val env: SparkEnv) {
 
-  def getQueue(df: UUID): Queue = {
-    dfToQueue.computeIfAbsent(df, new JFunction[UUID, Queue] {
-      override def apply(v1: UUID): Queue = {
-        new Queue()
+  @volatile private var _error: Throwable = _
+  @volatile private var _complete: Boolean = false
+
+  private val blockIds: Array[BlockId] = (0 until numPartitions).map(i =>
+    BlockId.apply("rdd_" + rddId + "_" + i)
+  ).toArray
+
+  def setError(e: Throwable): Unit = { _error = e }
+  def setComplete(): Unit = { _complete = true }
+
+  def isComplete: Boolean = _complete
+  def getError: String = if (_error != null) _error.getMessage else null
+
+  /**
+   * Returns an Array[String] of length numPartitions.
+   * For materialized partitions: the (mapped) executor ID suitable for Ray actor lookup.
+   * For not-yet-ready partitions: null.
+   */
+  def getReadyPartitions(): Array[String] = {
+    val locations = BlockManager.blockIdsToLocations(blockIds, env)
+    val result = new Array[String](numPartitions)
+    for ((key, value) <- locations if value.nonEmpty) {
+      val partitionId = key.name.substring(key.name.lastIndexOf('_') + 1).toInt
+      var executorId = value(0).substring(value(0).lastIndexOf('_') + 1)
+      if (restartedExecutors.containsKey(executorId)) {
+        executorId = restartedExecutors.get(executorId)
       }
-    })
-  }
-
-  @inline
-  def checkQueueExists(df: UUID): Queue = {
-    val queue = dfToQueue.get(df)
-    if (queue == null) {
-      throw new RuntimeException("The DataFrame does not exist")
+      result(partitionId) = executorId
     }
-    queue
-  }
-
-  def getQueueSize(df: UUID): Int = {
-    val queue = checkQueueExists(df)
-    queue.size()
-  }
-
-  def getRandom(df: UUID): Array[Byte] = {
-    val queue = checkQueueExists(df)
-    val ref = RayDPUtils.convert(queue.peek())
-    ref.get()
-  }
-
-  def removeQueue(df: UUID): Unit = {
-    dfToQueue.remove(df)
-  }
-
-  def clean(): Unit = {
-    dfToQueue.clear()
+    result
   }
 }
+

@@ -119,6 +119,18 @@ class SparkCluster(Cluster):
         self._configs["spark.executor.instances"] = str(self._num_executors)
         self._configs["spark.executor.cores"] = str(self._executor_cores)
         self._configs["spark.executor.memory"] = str(self._executor_memory)
+        # Enable Arrow IPC lz4 compression by default (Spark 4.1+).
+        # lz4 is faster than zstd for intra-cluster transfers where RayDP operates.
+        # Users can override by passing their own value for this config.
+        arrow_codec_key = "spark.sql.execution.arrow.compression.codec"
+        if arrow_codec_key not in self._configs:
+            self._configs[arrow_codec_key] = "lz4"
+        # RayDP converts whole partitions (not streaming UDFs), so one Arrow batch
+        # per partition minimizes per-batch overhead.  0 = unlimited rows per batch.
+        arrow_batch_key = "spark.sql.execution.arrow.maxRecordsPerBatch"
+        if arrow_batch_key not in self._configs:
+            self._configs[arrow_batch_key] = "0"
+
         if platform.system() != "Darwin":
             driver_node_ip = ray.util.get_node_ip_address()
             if "spark.driver.host" not in self._configs:

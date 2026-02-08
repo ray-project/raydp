@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools", "wheel", "grpcio-tools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "raydp"
+dynamic = ["version", "readme"]
+description = "RayDP: Distributed Data Processing on Ray"
+authors = [
+    {name = "RayDP Developers", email = "raydp-dev@googlegroups.com"}
+]
+license = "Apache-2.0"
+keywords = ["raydp", "spark", "ray", "distributed", "data-processing"]
+classifiers = [
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pandas >= 1.1.4",
+    "psutil",
+    "pyarrow >= 4.0.1",
+    "ray >= 2.53.0",
+    "pyspark >= 4.1.0",
+    "netifaces",
+    "protobuf > 3.19.5"
+]
+
+[tool.setuptools.dynamic]
+version = {attr = "setup.VERSION"}

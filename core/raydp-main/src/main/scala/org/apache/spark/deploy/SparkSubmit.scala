@@ -258,7 +258,6 @@ private[spark] class SparkSubmit extends Logging {
     }
 
     if (clusterManager == KUBERNETES) {
-      args.master = Utils.checkAndGetK8sMasterUrl(args.master)
       // Make sure KUBERNETES is included in our build if we're trying to use it
       if (!Utils.classIsLoadable(KUBERNETES_CLUSTER_SUBMIT_CLASS) && !Utils.isTesting) {
         error(
@@ -1044,7 +1043,7 @@ object SparkSubmit extends CommandLineUtils with Logging {
           super.doSubmit(args)
         } catch {
           case e: SparkUserAppException =>
-            exitFn(e.exitCode)
+            exitFn(e.exitCode, None)
         }
       }
 

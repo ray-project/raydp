@@ -15,20 +15,14 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.raydp
+package com.intel.raydp.shims.spark411
 
-import java.util.List
+import com.intel.raydp.shims.{SparkShimProvider => BaseSparkShimProvider, SparkShims, SparkShims411}
 
-import org.apache.spark.rdd.RayObjectRefRDD
-import org.apache.spark.sql.{DataFrame, SparkSession}
-import org.apache.spark.sql.types.{IntegerType, StructType}
+class SparkShimProvider extends BaseSparkShimProvider {
+  override def createShim: SparkShims = new SparkShims411()
 
-object ObjectStoreReader {
-  def createRayObjectRefDF(
-      spark: SparkSession,
-      locations: List[Array[Byte]]): DataFrame = {
-    val rdd = new RayObjectRefRDD(spark.sparkContext, locations)
-    val schema = new StructType().add("idx", IntegerType)
-    spark.createDataFrame(rdd, schema)
+  override def matches(version: String): Boolean = {
+    version.startsWith("4.1")
   }
 }

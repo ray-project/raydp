@@ -268,7 +268,6 @@ class RayAppMaster(host: String,
           s"{ CPU: $rayActorCPU, " +
           s"${appInfo.desc.resourceReqsPerExecutor
             .map { case (name, amount) => s"$name: $amount" }.mkString(", ")} }..")
-      // TODO: Support generic fractional logical resources using prefix spark.ray.actor.resource.*
 
       // This will check with dynamic auto scale no additional pending executor actor added more
       // than max executors count as this result in executor even running after job completion
@@ -292,8 +291,6 @@ class RayAppMaster(host: String,
         getAppMasterEndpointUrl(),
         rayActorCPU,
         memory,
-        // This won't work, Spark expect integer in custom resources,
-        // please see python test test_spark_on_fractional_custom_resource
         appInfo.desc.resourceReqsPerExecutor
           .map { case (name, amount) => (name, Double.box(amount)) }.asJava,
         placementGroup,

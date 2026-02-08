@@ -14,12 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+import time
 import uuid
 from typing import Callable, List, Optional, Union
 from dataclasses import dataclass
 
 from packaging import version
-import pandas as pd
 import pyarrow as pa
 import pyspark.sql as sql
 from pyspark.sql import SparkSession
@@ -77,56 +77,6 @@ def _fetch_arrow_table_from_executor(executor_actor_name: str,
     return reader.read_all()
 
 
-class RecordPiece:
-    def __init__(self, row_ids, num_rows: int):
-        self.row_ids = row_ids
-        self.num_rows = num_rows
-
-    def read(self, shuffle: bool) -> pd.DataFrame:
-        raise NotImplementedError
-
-    def with_row_ids(self, new_row_ids) -> "RecordPiece":
-        raise NotImplementedError
-
-    def __len__(self):
-        """Return the number of rows"""
-        return self.num_rows
-
-
-class RayObjectPiece(RecordPiece):
-    def __init__(self,
-                 obj_id: ray.ObjectRef,
-                 row_ids: Optional[List[int]],
-                 num_rows: int):
-        super().__init__(row_ids, num_rows)
-        self.obj_id = obj_id
-
-    def read(self, shuffle: bool) -> pd.DataFrame:
-        data = ray.get(self.obj_id)
-        reader = pa.ipc.open_stream(data)
-        tb = reader.read_all()
-        df: pd.DataFrame = tb.to_pandas()
-        if self.row_ids:
-            df = df.loc[self.row_ids]
-
-        if shuffle:
-            df = df.sample(frac=1.0)
-        return df
-
-    def with_row_ids(self, new_row_ids) -> "RayObjectPiece":
-        """chang the num_rows to the length of new_row_ids. Keep the original size if
-        the new_row_ids is None.
-        """
-
-        if new_row_ids:
-            num_rows = len(new_row_ids)
-        else:
-            num_rows = self.num_rows
-
-        return RayObjectPiece(self.obj_id, new_row_ids, num_rows)
-
-
-
 @dataclass
 class PartitionObjectsOwner:
     # Actor owner name
@@ -165,23 +115,26 @@ def spark_dataframe_to_ray_dataset(df: sql.DataFrame,
 def from_spark_recoverable(df: sql.DataFrame,
                            storage_level: StorageLevel = StorageLevel.MEMORY_AND_DISK,
                            parallelism: Optional[int] = None):
-    """Recoverable Spark->Ray conversion that survives executor loss."""
+    """Recoverable Spark->Ray conversion that survives executor loss.
+
+    Materialization and Ray fetching are overlapped: as each Spark partition
+    completes, its Ray fetch task is submitted immediately rather than waiting
+    for all partitions to finish first.
+    """
     num_part = df.rdd.getNumPartitions()
     if parallelism is not None:
         if parallelism != num_part:
             df = df.repartition(parallelism)
-    sc = df.sql_ctx.sparkSession.sparkContext
+    sc = df.sparkSession.sparkContext
     storage_level = sc._getJavaStorageLevel(storage_level)
     object_store_writer = sc._jvm.org.apache.spark.sql.raydp.ObjectStoreWriter
-    # Recoverable conversion for Ray node loss:
-    # - cache Arrow bytes in Spark
-    # - build Ray Dataset blocks via Ray tasks (lineage), each task refetches bytes via JVM actors
-    info = object_store_writer.prepareRecoverableRDD(df._jdf, storage_level)
-    rdd_id = info.rddId()
-    num_partitions = info.numPartitions()
-    schema_json = info.schemaJson()
-    driver_agent_url = info.driverAgentUrl()
-    locations = info.locations()
+
+    # Start materialization in the background; returns a handle we can poll.
+    handle = object_store_writer.startStreamingRecoverableRDD(df._jdf, storage_level)
+    rdd_id = handle.rddId()
+    num_partitions = handle.numPartitions()
+    schema_json = handle.schemaJson()
+    driver_agent_url = handle.driverAgentUrl()
 
     spark_conf = sc.getConf()
     fetch_num_cpus = float(
@@ -189,26 +142,30 @@ def from_spark_recoverable(df: sql.DataFrame,
     fetch_memory_str = spark_conf.get(
         "spark.ray.raydp_recoverable_fetch.task.resource.memory", "0")
     fetch_memory = float(parse_memory_size(fetch_memory_str))
+    task_opts = {"num_cpus": fetch_num_cpus, "memory": fetch_memory}
+    fetch_task = _fetch_arrow_table_from_executor.options(**task_opts)
 
+    # Poll for completed partitions and dispatch Ray fetch tasks as they become ready.
+    refs: List[Optional[ObjectRef]] = [None] * num_partitions
+    dispatched = set()
 
-    refs: List[ObjectRef] = []
-    for i in range(num_partitions):
-        executor_id = locations[i]
-        executor_actor_name = f"raydp-executor-{executor_id}"
-        task_opts = {
-            "num_cpus": fetch_num_cpus,
-            "memory": fetch_memory,
-        }
-        fetch_task = _fetch_arrow_table_from_executor.options(**task_opts)
-        refs.append(
-            fetch_task.remote(
-                executor_actor_name,
-                rdd_id,
-                i,
-                schema_json,
-                driver_agent_url,
-            )
-        )
+    while len(dispatched) < num_partitions:
+        err = handle.getError()
+        if err is not None:
+            raise RuntimeError(f"Spark materialization failed: {err}")
+
+        ready = handle.getReadyPartitions()
+        new_count = 0
+        for i in range(num_partitions):
+            if i not in dispatched and ready[i] is not None:
+                executor_actor_name = f"raydp-executor-{ready[i]}"
+                refs[i] = fetch_task.remote(
+                    executor_actor_name, rdd_id, i, schema_json, driver_agent_url)
+                dispatched.add(i)
+                new_count += 1
+
+        if len(dispatched) < num_partitions and new_count == 0:
+            time.sleep(0.1)
 
     return from_arrow_refs(refs)
 
@@ -226,45 +183,29 @@ def _convert_by_udf(spark: sql.SparkSession,
     jdf = object_store_reader.createRayObjectRefDF(spark._jsparkSession, locations)
     current_namespace = ray.get_runtime_context().namespace
     ray_address = ray.get(holder.get_ray_address.remote())
-    blocks_df = DataFrame(jdf, spark._wrapped if hasattr(spark, "_wrapped") else spark)
-    def _convert_blocks_to_dataframe(blocks):
+    blocks_df = DataFrame(jdf, spark)
+    def _convert_blocks_to_batches(batches):
         # connect to ray
         if not ray.is_initialized():
             ray.init(address=ray_address,
                      namespace=current_namespace,
                      logging_level=logging.WARN)
         obj_holder = ray.get_actor(holder_name)
-        for block in blocks:
-            dfs = []
-            for idx in block["idx"]:
-                ref = ray.get(obj_holder.get_object.remote(df_id, idx))
-                data = ray.get(ref)
-                dfs.append(data.to_pandas())
-            yield pd.concat(dfs)
-    df = blocks_df.mapInPandas(_convert_blocks_to_dataframe, schema)
+        for batch in batches:
+            indices = batch.column("idx").to_pylist()
+            # Batch both actor lookups and data fetches so Ray can pipeline them
+            ref_futures = [obj_holder.get_object.remote(df_id, idx) for idx in indices]
+            refs = ray.get(ref_futures)
+            tables = ray.get(list(refs))
+            combined = tables[0] if len(tables) == 1 else pa.concat_tables(tables)
+            yield from combined.to_batches()
+    df = blocks_df.mapInArrow(_convert_blocks_to_batches, schema)
     return df
-
-def _convert_by_rdd(spark: sql.SparkSession,
-                    blocks: Dataset,
-                    locations: List[bytes],
-                    schema: StructType) -> DataFrame:
-    object_ids = [block.binary() for block in blocks]
-    schema_str = schema.json()
-    jvm = spark.sparkContext._jvm
-    # create rdd in java
-    rdd = jvm.org.apache.spark.rdd.RayDatasetRDD(spark._jsc, object_ids, locations)
-    # convert the rdd to dataframe
-    object_store_reader = jvm.org.apache.spark.sql.raydp.ObjectStoreReader
-    jdf = object_store_reader.RayDatasetToDataFrame(spark._jsparkSession, rdd, schema_str)
-    return DataFrame(jdf, spark._wrapped if hasattr(spark, "_wrapped") else spark)
 
 @client_mode_wrap
 def get_locations(blocks):
-    core_worker = ray.worker.global_worker.core_worker
-    return [
-        core_worker.get_owner_address(block)
-        for block in blocks
-    ]
+    core_worker = _ray_global_worker.core_worker
+    return [core_worker.get_owner_address(b) for b in blocks]
 
 def ray_dataset_to_spark_dataframe(spark: sql.SparkSession,
                                    arrow_schema,
@@ -279,14 +220,7 @@ def ray_dataset_to_spark_dataframe(spark: sql.SparkSession,
     schema = StructType()
     for field in arrow_schema:
         schema.add(field.name, from_arrow_type(field.type), nullable=field.nullable)
-    #TODO how to branch on type of block?
-    sample = ray.get(blocks[0])
-    if isinstance(sample, bytes):
-        return _convert_by_rdd(spark, blocks, locations, schema)
-    elif isinstance(sample, pa.Table):
-        return _convert_by_udf(spark, blocks, locations, schema)
-    else:
-        raise RuntimeError("ray.to_spark only supports arrow type blocks")
+    return _convert_by_udf(spark, blocks, locations, schema)
 
 
 def read_spark_parquet(path: str) -> Dataset:

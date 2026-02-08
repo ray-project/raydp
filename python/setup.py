@@ -22,12 +22,11 @@ import sys
 from datetime import datetime
 from shutil import copy2, rmtree
 
-from grpc_tools.command import build_package_protos
 from setuptools import find_packages, setup, Command
 
 build_mode = os.getenv("RAYDP_BUILD_MODE", "")
 package_name = os.getenv("RAYDP_PACKAGE_NAME", "raydp")
-BASE_VERSION = "1.7.0"
+BASE_VERSION = "2.0.0"
 if build_mode == "nightly":
     VERSION = BASE_VERSION + datetime.today().strftime("b%Y%m%d.dev0")
 # for legacy raydp_nightly package
@@ -38,30 +37,14 @@ else:
 
 ROOT_DIR = os.path.dirname(__file__)
 
-TEMP_PATH = "deps"
 CORE_DIR = os.path.abspath("../core")
 BIN_DIR = os.path.abspath("../bin")
 
 JARS_PATH = glob.glob(os.path.join(CORE_DIR, f"**/target/raydp-*.jar"), recursive=True)
-JARS_TARGET = os.path.join(TEMP_PATH, "jars")
+JARS_TARGET = os.path.join(ROOT_DIR, "raydp", "jars")
 
 SCRIPT_PATH = os.path.join(BIN_DIR, f"raydp-submit")
-SCRIPT_TARGET = os.path.join(TEMP_PATH, "bin")
-
-if len(JARS_PATH) == 0:
-    print("Can't find core module jars, you need to build the jars with 'mvn clean package'"
-          " under core directory first.", file=sys.stderr)
-    sys.exit(-1)
-
-# build the temp dir
-try:
-    os.mkdir(TEMP_PATH)
-    os.mkdir(JARS_TARGET)
-    os.mkdir(SCRIPT_TARGET)
-except:
-    print(f"Temp path for symlink to parent already exists {TEMP_PATH}", file=sys.stderr)
-    sys.exit(-1)
-
+SCRIPT_TARGET = os.path.join(ROOT_DIR, "raydp", "bin")
 
 class CustomBuildPackageProtos(Command):
     """Command to generate project *_pb2.py modules from proto files.
@@ -80,6 +63,7 @@ class CustomBuildPackageProtos(Command):
         pass
 
     def run(self):
+        from grpc_tools.command import build_package_protos
         # due to limitations of the proto generator, we require that only *one*
         # directory is provided as an 'include' directory. We assume it's the '' key
         # to `self.distribution.package_dir` (and get a key error if it's not
@@ -87,23 +71,28 @@ class CustomBuildPackageProtos(Command):
         build_package_protos(self.distribution.package_dir["mpi_network_proto"],
                              self.strict_mode)
 
+if __name__ == "__main__":
+    if len(JARS_PATH) == 0:
+        print("Can't find core module jars, you need to build the jars with 'mvn clean package'"
+              " under core directory first.", file=sys.stderr)
+        sys.exit(-1)
 
-try:
+    # build the temp dir
+    if os.path.exists(JARS_TARGET):
+        rmtree(JARS_TARGET)
+    if os.path.exists(SCRIPT_TARGET):
+        rmtree(SCRIPT_TARGET)
+    os.mkdir(JARS_TARGET)
+    os.mkdir(SCRIPT_TARGET)
+    with open(os.path.join(JARS_TARGET, "__init__.py"), "w") as f:
+        f.write("")
+    with open(os.path.join(SCRIPT_TARGET, "__init__.py"), "w") as f:
+        f.write("")
+
     for jar_path in JARS_PATH:
         print(f"Copying {jar_path} to {JARS_TARGET}")
         copy2(jar_path, JARS_TARGET)
     copy2(SCRIPT_PATH, SCRIPT_TARGET)
-
-    install_requires = [
-        "numpy",
-        "pandas >= 1.1.4",
-        "psutil",
-        "pyarrow >= 4.0.1",
-        "ray >= 2.37.0",
-        "pyspark >= 3.1.1, <=3.5.7",
-        "netifaces",
-        "protobuf > 3.19.5"
-    ]
 
     _packages = find_packages()
     _packages.append("raydp.jars")
@@ -112,12 +101,6 @@ try:
     setup(
         name=package_name,
         version=VERSION,
-        author="RayDP Developers",
-        author_email="raydp-dev@googlegroups.com",
-        license="Apache 2.0",
-        url="https://github.com/ray-project/raydp",
-        keywords="raydp spark ray distributed data-processing",
-        description="RayDP: Distributed Data Processing on Ray",
         long_description=io.open(
             os.path.join(ROOT_DIR, os.path.pardir, "README.md"),
             "r",
@@ -125,23 +108,9 @@ try:
         long_description_content_type="text/markdown",
         packages=_packages,
         include_package_data=True,
-        package_dir={"raydp.jars": "deps/jars", "raydp.bin": "deps/bin",
-                     "mpi_network_proto": "raydp/mpi/network"},
+        package_dir={"mpi_network_proto": "raydp/mpi/network"},
         package_data={"raydp.jars": ["*.jar"], "raydp.bin": ["raydp-submit"]},
         cmdclass={
             'build_proto_modules': CustomBuildPackageProtos,
         },
-        install_requires=install_requires,
-        setup_requires=["grpcio-tools"],
-        python_requires='>=3.6',
-        classifiers=[
-            'License :: OSI Approved :: Apache Software License',
-            'Programming Language :: Python :: 3.8',
-            'Programming Language :: Python :: 3.9',
-            'Programming Language :: Python :: 3.10',
-        ]
     )
-finally:
-    rmtree(os.path.join(TEMP_PATH, "jars"))
-    rmtree(os.path.join(TEMP_PATH, "bin"))
-    os.rmdir(TEMP_PATH)

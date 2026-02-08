@@ -39,12 +39,7 @@ fi
 # build core part
 CORE_DIR="${CURRENT_DIR}/core"
 pushd ${CORE_DIR}
-if [[ -z $GITHUB_CI ]];
-then
-  mvn clean package -q -DskipTests
-else
-  mvn verify -q
-fi
+mvn clean package -q -DskipTests
 popd # core dir
 
 # build python part

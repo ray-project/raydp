@@ -324,29 +324,51 @@ class RayDPExecutor(
     val env = SparkEnv.get
     val context = SparkShimLoader.getSparkShims.getDummyTaskContext(partitionId, env)
     TaskContext.setTaskContext(context)
-    val schema = Schema.fromJSON(schemaStr)
-    val blockId = BlockId.apply("rdd_" + rddId + "_" + partitionId)
-    val iterator = env.blockManager.get(blockId)(classTag[Array[Byte]]) match {
-      case Some(blockResult) =>
-        blockResult.data.asInstanceOf[Iterator[Array[Byte]]]
-      case None =>
-        logWarning("The cached block has been lost. Cache it again via driver agent")
-        requestRecacheRDD(rddId, driverAgentUrl)
-        env.blockManager.get(blockId)(classTag[Array[Byte]]) match {
-          case Some(blockResult) =>
-            blockResult.data.asInstanceOf[Iterator[Array[Byte]]]
-          case None =>
-            throw new RayDPException("Still cannot get the block after recache!")
-        }
+    val taskAttemptId = context.taskAttemptId()
+    env.blockManager.registerTask(taskAttemptId)
+    try {
+      val schema = Schema.fromJSON(schemaStr)
+      val blockId = BlockId.apply("rdd_" + rddId + "_" + partitionId)
+      val (iterator, blockBytes) = env.blockManager.get(blockId)(classTag[Array[Byte]]) match {
+        case Some(blockResult) =>
+          (blockResult.data.asInstanceOf[Iterator[Array[Byte]]], blockResult.bytes)
+        case None =>
+          logWarning("The cached block has been lost. Cache it again via driver agent")
+          requestRecacheRDD(rddId, driverAgentUrl)
+          env.blockManager.get(blockId)(classTag[Array[Byte]]) match {
+            case Some(blockResult) =>
+              (blockResult.data.asInstanceOf[Iterator[Array[Byte]]], blockResult.bytes)
+            case None =>
+              throw new RayDPException("Still cannot get the block after recache!")
+          }
+      }
+      // Collect batch byte arrays (references only; data already in memory from BlockManager)
+      val batches = iterator.toArray
+
+      // Serialize schema header and EOS marker into small temp buffers
+      val schemaBuf = new ByteArrayOutputStream(512)
+      MessageSerializer.serialize(new WriteChannel(Channels.newChannel(schemaBuf)), schema)
+      val schemaBytes = schemaBuf.toByteArray
+
+      val eosBuf = new ByteArrayOutputStream(16)
+      ArrowStreamWriter.writeEndOfStream(new WriteChannel(Channels.newChannel(eosBuf)), new IpcOption)
+      val eosBytes = eosBuf.toByteArray
+
+      // Single allocation: copy schema + batches + EOS directly (avoids BAOS + toByteArray double-copy)
+      val totalSize = schemaBytes.length + batches.map(_.length.toLong).sum + eosBytes.length
+      val result = new Array[Byte](totalSize.toInt)
+      var offset = 0
+      System.arraycopy(schemaBytes, 0, result, offset, schemaBytes.length)
+      offset += schemaBytes.length
+      batches.foreach { batch =>
+        System.arraycopy(batch, 0, result, offset, batch.length)
+        offset += batch.length
+      }
+      System.arraycopy(eosBytes, 0, result, offset, eosBytes.length)
+      result
+    } finally {
+      env.blockManager.releaseAllLocksForTask(taskAttemptId)
+      TaskContext.unset()
     }
-    val byteOut = new ByteArrayOutputStream()
-    val writeChannel = new WriteChannel(Channels.newChannel(byteOut))
-    MessageSerializer.serialize(writeChannel, schema)
-    iterator.foreach(writeChannel.write)
-    ArrowStreamWriter.writeEndOfStream(writeChannel, new IpcOption)
-    val result = byteOut.toByteArray
-    writeChannel.close
-    byteOut.close
-    result
   }
 }
