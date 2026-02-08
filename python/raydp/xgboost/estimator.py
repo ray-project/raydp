@@ -15,16 +15,21 @@
 # limitations under the License.
 #
 
+import os
 from typing import Any, Callable, List, NoReturn, Optional, Union, Dict
+
+import pandas as pd
+import xgboost
+import ray.train
+from ray.train import ScalingConfig, RunConfig, FailureConfig, CheckpointConfig, Checkpoint
+from ray.train.xgboost import XGBoostTrainer, RayTrainReportCallback
+from ray.data.dataset import Dataset
 
 from raydp.estimator import EstimatorInterface
 from raydp.spark.interfaces import SparkEstimatorInterface, DF, OPTIONAL_DF
 from raydp import stop_spark
 from raydp.spark import spark_dataframe_to_ray_dataset, get_raydp_master_owner
 from raydp.spark.dataset import read_spark_parquet
-from ray.air.config import ScalingConfig, RunConfig, FailureConfig, CheckpointConfig
-from ray.data.dataset import Dataset
-from ray.train.xgboost import XGBoostTrainer, XGBoostCheckpoint
 
 class XGBoostEstimator(EstimatorInterface, SparkEstimatorInterface):
     def __init__(self,
@@ -55,13 +60,24 @@ class XGBoostEstimator(EstimatorInterface, SparkEstimatorInterface):
             train_ds: Dataset,
             evaluate_ds: Optional[Dataset] = None,
             max_retries=3) -> NoReturn:
+        label_column = self._label_column
+        xgboost_params = self._xgboost_params
+
+        def train_loop_per_worker(config):
+            train_shard = ray.train.get_dataset_shard("train")
+            train_df = pd.concat(list(train_shard.iter_batches(batch_format="pandas")))
+            train_y = train_df.pop(label_column)
+            dtrain = xgboost.DMatrix(train_df, label=train_y)
+            xgboost.train(
+                xgboost_params,
+                dtrain,
+                callbacks=[RayTrainReportCallback()],
+            )
+
         scaling_config = ScalingConfig(num_workers=self._num_workers,
                                       resources_per_worker=self._resources_per_worker)
         run_config = RunConfig(
             checkpoint_config=CheckpointConfig(
-                # Checkpoint every iteration.
-                checkpoint_frequency=1,
-                # Only keep the latest checkpoint and delete the others.
                 num_to_keep=1,
             ),
             failure_config=FailureConfig(max_failures=max_retries)
@@ -73,11 +89,10 @@ class XGBoostEstimator(EstimatorInterface, SparkEstimatorInterface):
         datasets = {"train": train_ds}
         if evaluate_ds:
             datasets["evaluate"] = evaluate_ds
-        trainer = XGBoostTrainer(scaling_config=scaling_config,
-                                datasets=datasets,
-                                label_column=self._label_column,
-                                params=self._xgboost_params,
-                                run_config=run_config)
+        trainer = XGBoostTrainer(train_loop_per_worker,
+                                 scaling_config=scaling_config,
+                                 datasets=datasets,
+                                 run_config=run_config)
         self._results = trainer.fit()
 
     def fit_on_spark(self,
@@ -116,4 +131,7 @@ class XGBoostEstimator(EstimatorInterface, SparkEstimatorInterface):
             train_ds, evaluate_ds, max_retries)
 
     def get_model(self):
-        return XGBoostTrainer.get_model(self._results.checkpoint)
+        checkpoint_dir = self._results.checkpoint.to_directory()
+        model = xgboost.Booster()
+        model.load_model(os.path.join(checkpoint_dir, RayTrainReportCallback.CHECKPOINT_NAME))
+        return model
