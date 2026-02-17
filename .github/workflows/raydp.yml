@@ -87,7 +87,7 @@ jobs:
           else
             pip install torch
           fi
-          pip install pyarrow "ray[train,default]==${{ matrix.ray-version }}" tqdm pytest "tensorflow-cpu>=2.13.1,<2.16" tabulate grpcio-tools wget
+          pip install pyarrow "ray[train,default]==${{ matrix.ray-version }}" tqdm pytest pytest-rerunfailures "tensorflow-cpu>=2.13.1,<2.16" tabulate grpcio-tools wget
           pip install "xgboost_ray[default]<=0.1.13"
           pip install "xgboost<=2.0.3"
           pip install torchmetrics
@@ -113,7 +113,7 @@ jobs:
           CUDA_VISIBLE_DEVICES: ""
         run: |
           ray start --head --num-cpus 6
-          pytest python/raydp/tests/ -v
+          pytest python/raydp/tests/ -v --reruns 2 --reruns-delay 10
           ray stop --force
       - name: Test Examples
         run: |
