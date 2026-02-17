@@ -104,6 +104,8 @@ jobs:
           pylint --rcfile=python/pylintrc python/raydp
           pylint --rcfile=python/pylintrc examples/*.py
       - name: Test with pytest
+        env:
+          CUDA_VISIBLE_DEVICES: ""
         run: |
           ray start --head --num-cpus 6
           pytest python/raydp/tests/ -v
