@@ -30,6 +30,7 @@ permissions: # added using https://github.com/step-security/secure-repo
 jobs:
   build-and-test:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest]
         python-version: ['3.10', '3.11']
