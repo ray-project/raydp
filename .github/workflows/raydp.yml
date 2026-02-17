@@ -99,7 +99,7 @@ jobs:
           pip install dist/raydp-*.whl
       - name: Lint
         run: |
-          pip install pylint==2.8.3
+          pip install pylint==3.2.7
           pylint --rcfile=python/pylintrc python/raydp
           pylint --rcfile=python/pylintrc examples/*.py
       - name: Test with pytest
