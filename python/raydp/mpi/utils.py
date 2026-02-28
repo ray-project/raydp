@@ -20,10 +20,11 @@ import select
 import subprocess
 import threading
 import time
+import socket
 from typing import List
 
 import grpc
-import netifaces
+import psutil
 
 
 class StoppableThread(threading.Thread):
@@ -111,13 +112,8 @@ def get_environ_value(key: str) -> str:
 
 def get_node_ip_address(node_addresses: List[str]) -> str:
     found = None
-    for interface in netifaces.interfaces():
-        addrs = netifaces.ifaddresses(interface)
-        addresses = addrs.get(netifaces.AF_INET, None)
-        if not addresses:
-            continue
-        for inet_addr in addresses:
-            address = inet_addr.get("addr", None)
-            if address in node_addresses:
-                found = address
+    for interface, addrs in psutil.net_if_addrs().items():
+        for addr in addrs:
+            if addr.family == socket.AF_INET and addr.address in node_addresses:
+                found = addr.address
     return found
