@@ -32,6 +32,7 @@ import org.apache.spark.deploy.raydp._
 import org.apache.spark.executor.RayDPExecutor
 import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.raydp.{RayDPUtils, RayExecutorUtils}
+import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.storage.StorageLevel
@@ -59,6 +60,7 @@ class ObjectStoreWriter(@transient val df: DataFrame) extends Serializable {
 
 object ObjectStoreWriter {
   val dfToId = new mutable.HashMap[DataFrame, UUID]()
+  private val recoverableRDDs = new ConcurrentHashMap[Integer, RDD[_]]()
   var driverAgent: RayDPDriverAgent = _
   var driverAgentUrl: String = _
   var address: Array[Byte] = null
@@ -170,6 +172,9 @@ object ObjectStoreWriter {
     val rdd = df.toArrowBatchRdd
     rdd.persist(storageLevel)
     rdd.count()
+    // Keep a strong reference so Spark's ContextCleaner does not GC the cached blocks
+    // before Ray tasks fetch them.
+    recoverableRDDs.put(rdd.id, rdd)
 
     var executorIds = df.sqlContext.sparkContext.getExecutorIds.toArray
     val numExecutors = executorIds.length
@@ -196,6 +201,18 @@ object ObjectStoreWriter {
     val locations = RayExecutorUtils.getBlockLocations(handles(0), rdd.id, numPartitions)
 
     RecoverableRDDInfo(rdd.id, numPartitions, schemaJson, driverAgentUrl, locations)
+  }
+
+  /**
+   * Release the strong reference to a recoverable RDD and unpersist it.
+   * Call this after all Ray tasks have finished fetching the cached blocks,
+   * or when the dataset is no longer needed.
+   */
+  def releaseRecoverableRDD(rddId: Int): Unit = {
+    val rdd = recoverableRDDs.remove(rddId)
+    if (rdd != null) {
+      rdd.unpersist()
+    }
   }
 
 }

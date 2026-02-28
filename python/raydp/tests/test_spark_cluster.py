@@ -299,6 +299,73 @@ def test_reconstruction(jdk17_extra_spark_configs):
     cluster.shutdown()
 
 
+def test_recoverable_survives_gc(jdk17_extra_spark_configs):
+    """Verify that from_spark_recoverable succeeds even after JVM GC runs.
+
+    Before the pinning fix, Spark's ContextCleaner would GC the unreferenced
+    RDD and evict all cached blocks between prepareRecoverableRDD and the Ray
+    task fetch.  The strong reference in ObjectStoreWriter.recoverableRDDs
+    prevents this.
+    """
+    cluster = Cluster(
+        initialize_head=True,
+        head_node_args={
+            "num_cpus": 6,
+        }
+    )
+    ray.init(address=cluster.address, include_dashboard=False)
+    spark = raydp.init_spark(
+        "test_gc", 1, 1, "500M", configs=jdk17_extra_spark_configs)
+
+    df = spark.range(1000)
+    ds = raydp.spark.from_spark_recoverable(df)
+
+    # Force JVM GC + finalizers to trigger Spark ContextCleaner
+    spark.sparkContext._jvm.System.gc()
+    time.sleep(2)
+
+    # Verify all blocks are still fetchable
+    count = ds.count()
+    assert count == 1000
+
+    raydp.stop_spark()
+    ray.shutdown()
+    cluster.shutdown()
+
+
+def test_release_spark_recoverable(jdk17_extra_spark_configs):
+    """Verify that release_spark_recoverable unpersists the pinned RDD."""
+    cluster = Cluster(
+        initialize_head=True,
+        head_node_args={
+            "num_cpus": 6,
+        }
+    )
+    ray.init(address=cluster.address, include_dashboard=False)
+    spark = raydp.init_spark(
+        "test_release", 1, 1, "500M", configs=jdk17_extra_spark_configs)
+
+    df = spark.range(100)
+    ds = raydp.spark.from_spark_recoverable(df)
+
+    sc = spark.sparkContext
+    # Look up the rdd_id that was tracked internally
+    from raydp.spark.dataset import _recoverable_rdd_ids
+    rdd_id = _recoverable_rdd_ids[df]
+    assert sc._jsc.sc().getPersistentRDDs().contains(rdd_id)
+
+    # Release via the public API
+    raydp.spark.release_spark_recoverable(df)
+
+    # After release, the RDD should no longer be persisted
+    assert not sc._jsc.sc().getPersistentRDDs().contains(rdd_id)
+    assert df not in _recoverable_rdd_ids
+
+    raydp.stop_spark()
+    ray.shutdown()
+    cluster.shutdown()
+
+
 @pytest.mark.skip("flaky")
 def test_custom_installed_spark(custom_spark_dir):
     os.environ["SPARK_HOME"] = custom_spark_dir

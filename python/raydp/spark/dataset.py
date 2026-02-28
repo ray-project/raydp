@@ -15,7 +15,7 @@
 # limitations under the License.
 import logging
 import uuid
-from typing import Callable, List, Optional, Union
+from typing import Callable, Dict, List, Optional, Union
 from dataclasses import dataclass
 
 from packaging import version
@@ -43,6 +43,8 @@ from raydp.utils import parse_memory_size
 
 
 logger = logging.getLogger(__name__)
+
+_recoverable_rdd_ids: Dict[sql.DataFrame, int] = {}
 
 def _enable_load_code_from_local() -> None:
     """Enable Ray cross-language support via internal API (driver only)."""
@@ -74,7 +76,12 @@ def _fetch_arrow_table_from_executor(executor_actor_name: str,
         executor_actor.getRDDPartition.remote(
             rdd_id, partition_id, schema_json, driver_agent_url))
     reader = pa.ipc.open_stream(pa.BufferReader(ipc_bytes))
-    return reader.read_all()
+    table = reader.read_all()
+    # Spark's Arrow conversion may attach schema metadata. Ray Data metadata extraction
+    # can be sensitive to unexpected schema metadata in some Ray/PyArrow combinations.
+    # Strip schema metadata to make blocks more portable/deterministic.
+    table = table.replace_schema_metadata()
+    return table
 
 
 class RecordPiece:
@@ -166,6 +173,7 @@ def from_spark_recoverable(df: sql.DataFrame,
                            storage_level: StorageLevel = StorageLevel.MEMORY_AND_DISK,
                            parallelism: Optional[int] = None):
     """Recoverable Spark->Ray conversion that survives executor loss."""
+    original_df = df
     num_part = df.rdd.getNumPartitions()
     if parallelism is not None:
         if parallelism != num_part:
@@ -178,6 +186,7 @@ def from_spark_recoverable(df: sql.DataFrame,
     # - build Ray Dataset blocks via Ray tasks (lineage), each task refetches bytes via JVM actors
     info = object_store_writer.prepareRecoverableRDD(df._jdf, storage_level)
     rdd_id = info.rddId()
+    _recoverable_rdd_ids[original_df] = rdd_id
     num_partitions = info.numPartitions()
     schema_json = info.schemaJson()
     driver_agent_url = info.driverAgentUrl()
@@ -211,6 +220,21 @@ def from_spark_recoverable(df: sql.DataFrame,
         )
 
     return from_arrow_refs(refs)
+
+def release_spark_recoverable(df: sql.DataFrame) -> None:
+    """Release the pinned Spark RDD created by ``from_spark_recoverable``.
+
+    After all Ray tasks have finished consuming the dataset, call this to
+    unpersist the cached Arrow IPC bytes and free the strong JVM reference.
+    If not called, the RDD is released automatically when the SparkContext stops.
+
+    Args:
+        df: The same DataFrame that was passed to ``from_spark_recoverable``.
+    """
+    rdd_id = _recoverable_rdd_ids.pop(df, None)
+    if rdd_id is not None:
+        sc = df.sql_ctx.sparkSession.sparkContext
+        sc._jvm.org.apache.spark.sql.raydp.ObjectStoreWriter.releaseRecoverableRDD(rdd_id)
 
 def _convert_by_udf(spark: sql.SparkSession,
                     blocks: List[ObjectRef],

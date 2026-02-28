@@ -19,7 +19,8 @@ from .dataset import PartitionObjectsOwner, \
                      get_raydp_master_owner, \
                      spark_dataframe_to_ray_dataset, \
                      ray_dataset_to_spark_dataframe, \
-                     from_spark_recoverable
+                     from_spark_recoverable, \
+                     release_spark_recoverable
 from .interfaces import SparkEstimatorInterface
 from .ray_cluster import SparkCluster
 
@@ -30,5 +31,6 @@ __all__ = [
   "get_raydp_master_owner",
   "spark_dataframe_to_ray_dataset",
   "ray_dataset_to_spark_dataframe",
-  "from_spark_recoverable"
+  "from_spark_recoverable",
+  "release_spark_recoverable"
 ]

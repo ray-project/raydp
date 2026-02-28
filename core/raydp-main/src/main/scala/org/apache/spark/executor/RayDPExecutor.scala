@@ -273,11 +273,15 @@ class RayDPExecutor(
     val blockIds = (0 until numPartitions).map(i =>
       BlockId.apply("rdd_" + rddId + "_" + i)
     ).toArray
-    val locations = BlockManager.blockIdsToLocations(blockIds, env)
-    var result = new Array[String](numPartitions)
-    for ((key, value) <- locations) {
-      val partitionId = key.name.substring(key.name.lastIndexOf('_') + 1).toInt
-      result(partitionId) = value(0).substring(value(0).lastIndexOf('_') + 1)
+    // Prefer structured locations (BlockManagerId.executorId) over parsing a string representation
+    // of ExecutorCacheTaskLocation. This is more robust across Spark versions.
+    val locsByBlock = env.blockManager.master.getLocations(blockIds)
+    val result = new Array[String](numPartitions)
+    for (i <- 0 until numPartitions) {
+      val locs = locsByBlock(i)
+      if (locs != null && locs.nonEmpty) {
+        result(i) = locs.head.executorId
+      }
     }
     result
   }
@@ -330,7 +334,7 @@ class RayDPExecutor(
       case Some(blockResult) =>
         blockResult.data.asInstanceOf[Iterator[Array[Byte]]]
       case None =>
-        logWarning("The cached block has been lost. Cache it again via driver agent")
+        logWarning(s"The cached block $blockId has been lost. Cache it again via driver agent")
         requestRecacheRDD(rddId, driverAgentUrl)
         env.blockManager.get(blockId)(classTag[Array[Byte]]) match {
           case Some(blockResult) =>
@@ -345,8 +349,8 @@ class RayDPExecutor(
     iterator.foreach(writeChannel.write)
     ArrowStreamWriter.writeEndOfStream(writeChannel, new IpcOption)
     val result = byteOut.toByteArray
-    writeChannel.close
-    byteOut.close
+    writeChannel.close()
+    byteOut.close()
     result
   }
 }
