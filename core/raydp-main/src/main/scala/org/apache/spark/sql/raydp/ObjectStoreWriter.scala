@@ -96,9 +96,9 @@ object ObjectStoreWriter {
   }
 
   def toArrowSchema(df: DataFrame): Schema = {
-    val conf = df.queryExecution.sparkSession.sessionState.conf
+    val conf = df.sparkSession.sessionState.conf
     val timeZoneId = conf.getConf(SQLConf.SESSION_LOCAL_TIMEZONE)
-    SparkShimLoader.getSparkShims.toArrowSchema(df.schema, timeZoneId)
+    SparkShimLoader.getSparkShims.toArrowSchema(df.schema, timeZoneId, df.sparkSession)
   }
 
   @deprecated
@@ -109,10 +109,10 @@ object ObjectStoreWriter {
     }
     val uuid = dfToId.getOrElseUpdate(df, UUID.randomUUID())
     val queue = ObjectRefHolder.getQueue(uuid)
-    val rdd = df.toArrowBatchRdd
+    val rdd = SparkShimLoader.getSparkShims.toArrowBatchRDD(df)
     rdd.persist(storageLevel)
     rdd.count()
-    var executorIds = df.sqlContext.sparkContext.getExecutorIds.toArray
+    val executorIds = df.sparkSession.sparkContext.getExecutorIds.toArray
     val numExecutors = executorIds.length
     val appMasterHandle = Ray.getActor(RayAppMaster.ACTOR_NAME)
                              .get.asInstanceOf[ActorHandle[RayAppMaster]]
@@ -169,14 +169,14 @@ object ObjectStoreWriter {
         "Not yet connected to Ray! Please set fault_tolerant_mode=True when starting RayDP.")
     }
 
-    val rdd = df.toArrowBatchRdd
+    val rdd = SparkShimLoader.getSparkShims.toArrowBatchRDD(df)
     rdd.persist(storageLevel)
     rdd.count()
     // Keep a strong reference so Spark's ContextCleaner does not GC the cached blocks
     // before Ray tasks fetch them.
     recoverableRDDs.put(rdd.id, rdd)
 
-    var executorIds = df.sqlContext.sparkContext.getExecutorIds.toArray
+    val executorIds = df.sparkSession.sparkContext.getExecutorIds.toArray
     val numExecutors = executorIds.length
     val appMasterHandle = Ray.getActor(RayAppMaster.ACTOR_NAME)
                              .get.asInstanceOf[ActorHandle[RayAppMaster]]
