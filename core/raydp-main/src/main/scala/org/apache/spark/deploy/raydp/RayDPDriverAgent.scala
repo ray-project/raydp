@@ -17,8 +17,6 @@
 
 package org.apache.spark.deploy.raydp
 
-import io.ray.runtime.config.RayConfig
-
 import org.apache.spark.{SecurityManager, SparkConf, SparkContext}
 import org.apache.spark.internal.Logging
 import org.apache.spark.rpc._
@@ -34,7 +32,11 @@ class RayDPDriverAgent() {
 
   def init(): Unit = {
     val securityMgr = new SecurityManager(conf)
-    val host = RayConfig.create().nodeIp
+    val host = spark.conf.getOption("spark.driver.bindAddress")
+      .orElse(spark.conf.getOption("spark.driver.host"))
+      .getOrElse(throw new RuntimeException(
+        "spark.driver.bindAddress or spark.driver.host must be set " +
+        "for RayDPDriverAgent to bind its RPC endpoint"))
     rpcEnv = RpcEnv.create(
       RayAppMaster.ENV_NAME,
       host,
@@ -42,7 +44,6 @@ class RayDPDriverAgent() {
       0,
       conf,
       securityMgr,
-      // limit to single-thread
       numUsableCores = 1,
       clientMode = false)
     // register endpoint

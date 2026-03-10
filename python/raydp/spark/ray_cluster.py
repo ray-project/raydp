@@ -18,7 +18,6 @@
 import glob
 import os
 import sys
-import platform
 import pyspark
 from typing import Any, Dict
 
@@ -119,11 +118,10 @@ class SparkCluster(Cluster):
         self._configs["spark.executor.instances"] = str(self._num_executors)
         self._configs["spark.executor.cores"] = str(self._executor_cores)
         self._configs["spark.executor.memory"] = str(self._executor_memory)
-        if platform.system() != "Darwin":
-            driver_node_ip = ray.util.get_node_ip_address()
-            if "spark.driver.host" not in self._configs:
-                self._configs["spark.driver.host"] = str(driver_node_ip)
-                self._configs["spark.driver.bindAddress"] = str(driver_node_ip)
+        driver_node_ip = ray.util.get_node_ip_address()
+        if "spark.driver.host" not in self._configs:
+            self._configs["spark.driver.host"] = str(driver_node_ip)
+            self._configs["spark.driver.bindAddress"] = str(driver_node_ip)
 
         raydp_cp = os.path.abspath(os.path.join(os.path.abspath(__file__), "../../jars/*"))
         ray_cp = os.path.abspath(os.path.join(os.path.dirname(ray.__file__), "jars/*"))
