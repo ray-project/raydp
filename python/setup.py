@@ -96,11 +96,11 @@ try:
 
     install_requires = [
         "numpy",
-        "pandas >= 1.1.4",
+        "pandas >= 2.2.0, < 3.0.0",
         "psutil",
         "pyarrow >= 4.0.1",
         "ray >= 2.37.0",
-        "pyspark >= 3.1.1, <=3.5.7",
+        "pyspark >= 4.0.0",
         "protobuf > 3.19.5"
     ]
 
@@ -131,13 +131,16 @@ try:
             'build_proto_modules': CustomBuildPackageProtos,
         },
         install_requires=install_requires,
+        extras_require={
+            "tensorflow": ["tensorflow>=2.15.1,<2.16"],
+            "tensorflow-gpu": ["tensorflow[and-cuda]>=2.15.1,<2.16"],
+        },
         setup_requires=["grpcio-tools"],
-        python_requires='>=3.6',
+        python_requires='>=3.10',
         classifiers=[
             'License :: OSI Approved :: Apache Software License',
-            'Programming Language :: Python :: 3.8',
-            'Programming Language :: Python :: 3.9',
             'Programming Language :: Python :: 3.10',
+            'Programming Language :: Python :: 3.11',
         ]
     )
 finally:

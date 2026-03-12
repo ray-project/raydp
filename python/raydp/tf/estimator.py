@@ -38,6 +38,7 @@ from raydp.spark.dataset import read_spark_parquet
 from raydp.spark.interfaces import SparkEstimatorInterface, DF, OPTIONAL_DF
 from raydp import stop_spark
 
+
 class TFEstimator(EstimatorInterface, SparkEstimatorInterface):
     def __init__(self,
                  num_workers: int = 1,
