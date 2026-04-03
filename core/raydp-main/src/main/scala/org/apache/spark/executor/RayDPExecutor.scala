@@ -19,11 +19,13 @@ package org.apache.spark.executor
 
 import java.io.{ByteArrayOutputStream, File}
 import java.nio.channels.Channels
+import java.nio.file.Files
 import java.nio.file.Paths
 import java.util.concurrent.atomic.AtomicBoolean
 
 import scala.reflect.classTag
 
+import com.sun.jna.{Library, Native}
 import com.intel.raydp.shims.SparkShimLoader
 import io.ray.api.Ray
 import io.ray.runtime.config.RayConfig
@@ -110,6 +112,7 @@ class RayDPExecutor(
     }
     createWorkingDir(appId)
     setUserDir()
+    switchProcessWorkingDirBestEffort()
 
     val userClassPath = classPathEntries.split(java.io.File.pathSeparator)
       .filter(_.nonEmpty).map(new File(_).toURI.toURL)
@@ -188,6 +191,48 @@ class RayDPExecutor(
     logInfo(s"Set user.dir to ${workingDir.getAbsolutePath}")
   }
 
+  private def switchProcessWorkingDirBestEffort(): Unit = {
+    val targetDir = workingDir.getAbsolutePath
+    val beforeCwd = getProcessWorkingDir
+
+    try {
+      val rc = LibCHolder.libc.chdir(targetDir)
+      if (rc != 0) {
+        logWarning(s"Failed to switch executor process cwd from ${beforeCwd} to ${targetDir}, " +
+          s"chdir returned rc=${rc}, errno=${Native.getLastError}")
+        return
+      }
+
+      val afterCwd = getProcessWorkingDir
+      logInfo(s"Switched executor process cwd from ${beforeCwd} to ${afterCwd}, " +
+        s"target is ${targetDir}")
+    } catch {
+      case e: Throwable =>
+        logWarning(s"Failed to switch executor process cwd from ${beforeCwd} to ${targetDir}", e)
+    }
+  }
+
+  private def getProcessWorkingDir: String = {
+    try {
+      val procCwd = Paths.get("/proc/self/cwd")
+      if (Files.exists(procCwd)) {
+        Files.readSymbolicLink(procCwd).toString
+      } else {
+        new File(".").getCanonicalPath
+      }
+    } catch {
+      case _: Throwable => "<unknown>"
+    }
+  }
+
+  private trait LibC extends Library {
+    def chdir(path: String): Int
+  }
+
+  private object LibCHolder {
+    lazy val libc: LibC = Native.load("c", classOf[LibC]).asInstanceOf[LibC]
+  }
+
   private def serveAsExecutor(
       appId: String,
       driverUrl: String,
@@ -238,7 +283,10 @@ class RayDPExecutor(
       val workerTmpDir = new File(workingDir, "_tmp")
       workerTmpDir.mkdir()
       assert(workerTmpDir.exists() && workerTmpDir.isDirectory)
-      SparkEnv.get.driverTmpDir = Some(workerTmpDir.getAbsolutePath)
+      // Keep Spark's distributed file/archive root aligned with executor workingDir.
+      SparkEnv.get.driverTmpDir = Some(workingDir.getAbsolutePath)
+      logInfo(s"Set SparkEnv.driverTmpDir to ${workingDir.getAbsolutePath}, " +
+        s"executor tmp dir is ${workerTmpDir.getAbsolutePath}")
 
       val appMasterRef = env.rpcEnv.setupEndpointRefByURI(appMasterURL)
       appMasterRef.ask(ExecutorStarted(executorId))
