@@ -155,9 +155,12 @@ class RayCoarseGrainedSchedulerBackend(
 
     // Start executors with a few necessary configs for registering with the scheduler
     val sparkJavaOpts = Utils.sparkJavaOpts(conf, SparkConf.isExecutorStartupConf)
-    // add Xmx, it should not be set in java opts, because Spark is not allowed.
-    // We also add Xms to ensure the Xmx >= Xms
-    val memoryLimit = Seq(s"-Xms${sc.executorMemory}M", s"-Xmx${sc.executorMemory}M")
+    val executorHeapMemoryMb = sc.executorMemory
+    val executorOverheadMb = getExecutorMemoryOverheadMb(executorHeapMemoryMb)
+    val rayActorMemoryMb = executorHeapMemoryMb + executorOverheadMb
+
+    // Keep executor heap as spark.executor.memory; overhead is for process-level reservation.
+    val memoryLimit = Seq(s"-Xms${executorHeapMemoryMb}M", s"-Xmx${executorHeapMemoryMb}M")
 
     val javaOpts = sparkJavaOpts ++ extraJavaOpts ++ memoryLimit ++ javaAgentOpt()
 
@@ -182,7 +185,11 @@ class RayCoarseGrainedSchedulerBackend(
       coresPerExecutor = coresPerExecutor, memoryPerExecutorMB = sc.executorMemory,
       command = command,
       resourceReqsPerExecutor = resourcesInMap,
-      rayActorCPU = rayActorCPU)
+      rayActorCPU = rayActorCPU,
+      rayActorMemoryPerExecutorMB = rayActorMemoryMb)
+
+    logInfo(s"Executor memory profile: heap=${executorHeapMemoryMb}MB, " +
+      s"overhead=${executorOverheadMb}MB, rayActorReserve=${rayActorMemoryMb}MB")
 
     val rpcEnv = sc.env.rpcEnv
     appMasterRef.set(rpcEnv.setupEndpoint(
@@ -225,6 +232,20 @@ class RayCoarseGrainedSchedulerBackend(
       }
     }
     results
+  }
+
+  private def getExecutorMemoryOverheadMb(executorMemoryMb: Int): Int = {
+    // This factor is the fraction of executor memory reserved for non-heap overhead
+    // (for example JVM/native memory and container overhead). Default to 10% when
+    // the config is not set to match Spark's standard executor overhead sizing.
+    val overheadFactor = sc.conf.getOption("spark.executor.memoryOverheadFactor")
+      .map(_.toDouble)
+      .getOrElse(0.10d)
+
+    ResourceProfile.calculateOverHeadMemory(
+      sc.conf.get(config.EXECUTOR_MEMORY_OVERHEAD),
+      executorMemoryMb,
+      overheadFactor).toInt
   }
 
   private def javaAgentOpt(): Seq[String] = {
