@@ -40,7 +40,7 @@ import org.apache.spark.internal.config._
 import org.apache.spark.resource.ResourceProfile
 import org.apache.spark.rpc.{RpcEndpointRef, RpcEnv}
 import org.apache.spark.scheduler.cluster.CoarseGrainedClusterMessages.{RetrieveSparkAppConfig, SparkAppConfig}
-import org.apache.spark.storage.{BlockId, BlockManager}
+import org.apache.spark.storage.BlockId
 import org.apache.spark.util.Utils
 
 class RayDPExecutor(
