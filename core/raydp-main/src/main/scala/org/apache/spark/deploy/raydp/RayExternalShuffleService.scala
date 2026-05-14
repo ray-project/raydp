@@ -17,7 +17,7 @@
 
 package org.apache.spark.deploy.raydp
 
-import io.ray.api.Ray;
+import io.ray.api.Ray
 
 import org.apache.spark.{SecurityManager, SparkConf}
 import org.apache.spark.deploy.ExternalShuffleService
@@ -27,6 +27,8 @@ class RayExternalShuffleService() extends Logging {
   val conf = new SparkConf()
   val mgr = new SecurityManager(conf)
   val instance = new ExternalShuffleService(conf, mgr)
+
+  start()
 
   def start(): Unit = {
       instance.start()

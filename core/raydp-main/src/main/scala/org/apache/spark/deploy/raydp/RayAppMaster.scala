@@ -151,16 +151,12 @@ class RayAppMaster(host: String,
       case RegisterExecutor(executorId, executorIp) =>
         val success = appInfo.registerExecutor(executorId)
         if (success) {
-          // external shuffle service is enabled
-          if (conf.getBoolean("spark.shuffle.service.enabled", false)) {
-            // the node executor is in has not started shuffle service
-            if (!nodesWithShuffleService.contains(executorIp)) {
-              logInfo(s"Starting shuffle service on ${executorIp}")
-              val service = ExternalShuffleServiceUtils.createShuffleService(
-                executorIp, shuffleServiceOptions.toBuffer.asJava)
-              ExternalShuffleServiceUtils.startShuffleService(service)
-              nodesWithShuffleService(executorIp) = service
-            }
+          if (conf.getBoolean("spark.shuffle.service.enabled", false) &&
+              !nodesWithShuffleService.contains(executorIp)) {
+            logInfo(s"Starting shuffle service on ${executorIp}")
+            val service = ExternalShuffleServiceUtils.createShuffleService(
+              executorIp, shuffleServiceOptions.toBuffer.asJava)
+            nodesWithShuffleService(executorIp) = service
           }
           setUpExecutor(executorId)
         }
