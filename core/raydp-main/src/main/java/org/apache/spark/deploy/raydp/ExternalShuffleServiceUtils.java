@@ -18,21 +18,31 @@
 package org.apache.spark.deploy.raydp;
 
 import java.util.List;
+import java.util.Optional;
 
 import io.ray.api.ActorHandle;
 import io.ray.api.Ray;
 
 public class ExternalShuffleServiceUtils {
-  public static ActorHandle<RayExternalShuffleService> createShuffleService(
-      String node, List<String> options) {
-    return Ray.actor(RayExternalShuffleService::new)
-              .setResource("node:" + node, 0.01)
-              .setJvmOptions(options).remote();
+  private static String getShuffleServiceActorName(String node) {
+    return "raydp-shuffle-service-" + node.replace('.', '-');
   }
 
-  public static void startShuffleService(
-      ActorHandle<RayExternalShuffleService> handle) {
-    handle.task(RayExternalShuffleService::start).remote();
+  public static ActorHandle<RayExternalShuffleService> createShuffleService(
+      String node, List<String> options) {
+    String actorName = getShuffleServiceActorName(node);
+    Optional<ActorHandle<RayExternalShuffleService>> existing = Ray.getActor(actorName);
+    if (existing.isPresent()) {
+      return existing.get();
+    }
+
+    return Ray.actor(RayExternalShuffleService::new)
+              .setName(actorName)
+              .setResource("node:" + node, 0.01)
+              .setJvmOptions(options)
+              .setMaxRestarts(-1)
+              .setMaxTaskRetries(-1)
+              .remote();
   }
 
   public static void stopShuffleService(

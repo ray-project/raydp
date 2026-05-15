@@ -26,7 +26,11 @@ case class RegisterApplication(appDescription: ApplicationDescription, driver: R
 
 case class RegisteredApplication(appId: String, master: RpcEndpointRef) extends RayDPDeployMessage
 
-case class UnregisterApplication(appId: String) extends RayDPDeployMessage
+case class FinishApplication(
+    appId: String,
+    state: ApplicationState.Value,
+    exitCode: Int,
+    diagnostics: String) extends RayDPDeployMessage
 
 case class RegisterExecutor(executorId: String, nodeIp: String) extends RayDPDeployMessage
 

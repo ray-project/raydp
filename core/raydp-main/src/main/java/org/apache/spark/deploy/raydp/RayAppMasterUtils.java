@@ -57,6 +57,16 @@ public class RayAppMasterUtils {
     return handle.task(RayAppMaster::getRestartedExecutors).remote().get();
   }
 
+  public static boolean finishApplication(
+      ActorHandle<RayAppMaster> handle,
+      String appId,
+      String stateName,
+      int exitCode,
+      String diagnostics) {
+    return handle.task(RayAppMaster::finishApplication, appId, stateName, exitCode, diagnostics)
+            .remote().get();
+  }
+
   public static void stopAppMaster(
       ActorHandle<RayAppMaster> handle) {
     handle.task(RayAppMaster::stop).remote().get();
