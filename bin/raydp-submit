@@ -143,6 +143,12 @@ added_args+=("spark.driver.host=$RAY_DRIVER_NODE_IP")
 added_args+=("--conf")
 added_args+=("spark.driver.bindAddress=$RAY_DRIVER_NODE_IP")
 
+# JvmExitGuard: force JVM exit after Spark app ends if non-daemon threads keep it alive.
+# Set RAYDP_JVM_EXIT_TIMEOUT env var to override the default timeout (300s) or disable (0).
+if [ -n "$RAYDP_JVM_EXIT_TIMEOUT" ]; then
+  added_confs+=("-Draydp.jvm.exit.timeout=$RAYDP_JVM_EXIT_TIMEOUT")
+fi
+
 # Find the java binary
 if [ -n "${JAVA_HOME}" ]; then
   RUNNER="${JAVA_HOME}/bin/java"

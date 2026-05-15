@@ -50,7 +50,7 @@ import org.apache.ivy.plugins.resolver.{ChainResolver, FileSystemResolver, IBibl
 
 import org.apache.spark._
 import org.apache.spark.api.r.RUtils
-import org.apache.spark.deploy.raydp.{DriverAppMasterReporter, DriverExitState}
+import org.apache.spark.deploy.raydp.{DriverAppMasterReporter, DriverExitState, JvmExitGuard}
 import org.apache.spark.deploy.rest._
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config._
@@ -1016,6 +1016,7 @@ object SparkSubmit extends CommandLineUtils with Logging {
     val snapshot = DriverExitState.current()
     if (DriverExitState.isTerminal(snapshot.state)) {
       DriverAppMasterReporter.tryReportAndCleanup()
+      JvmExitGuard.arm(snapshot.exitCode)
     }
   }
 
@@ -1038,7 +1039,7 @@ object SparkSubmit extends CommandLineUtils with Logging {
     DriverAppMasterReporter.reset()
     val originalExitFn = exitFn
     exitFn = (exitCode: Int) => {
-      if (exitCode == 0) {
+      if (exitCode == JvmExitGuard.EXIT_SUCCESS) {
         DriverExitState.trySetFinished()
       } else {
         DriverExitState.trySetFailed(exitCode, s"SparkSubmit exited with status $exitCode")
@@ -1083,7 +1084,7 @@ object SparkSubmit extends CommandLineUtils with Logging {
       finalizeDriverTermination()
     } catch {
       case t: Throwable =>
-        DriverExitState.trySetFailed(1, describeFailure(t))
+        DriverExitState.trySetFailed(JvmExitGuard.EXIT_APP_FAILED, describeFailure(t))
         finalizeDriverTermination()
         throw t
     } finally {

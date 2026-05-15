@@ -61,7 +61,7 @@ class RayCoarseGrainedSchedulerBackend(
     override protected def conf: SparkConf = sc.conf
     override protected def onStopRequest(): Unit = {
       DriverExitState.trySetKilled(
-        143,
+        JvmExitGuard.EXIT_KILLED,
         "Spark launcher requested application stop.")
       stop(SparkAppHandle.State.KILLED)
     }
@@ -310,6 +310,7 @@ class RayCoarseGrainedSchedulerBackend(
         super.stop() // this will stop all executors
         if (finalState == SparkAppHandle.State.KILLED) {
           DriverAppMasterReporter.tryReportAndCleanup()
+          JvmExitGuard.arm(DriverExitState.current().exitCode)
         }
       } finally {
         appMasterRef.set(null)

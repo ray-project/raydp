@@ -25,6 +25,7 @@ import io.ray.api.ActorHandle
 
 import org.apache.spark.executor.RayDPExecutor
 import org.apache.spark.internal.Logging
+import org.apache.spark.deploy.raydp.JvmExitGuard
 import org.apache.spark.raydp.RayExecutorUtils
 import org.apache.spark.resource.ResourceInformation
 import org.apache.spark.rpc.{RpcAddress, RpcEndpointRef}
@@ -67,7 +68,7 @@ private[spark] class ApplicationInfo(
     addressToExecutorId = new HashMap[RpcAddress, String]
     executorIdToHandler = new HashMap[String, ActorHandle[RayDPExecutor]]
     endTime = -1L
-    exitCode = 0
+    exitCode = JvmExitGuard.EXIT_SUCCESS
     diagnostics = null
     nextExecutorId = 0
     removedExecutors = new ArrayBuffer[ExecutorDesc]
@@ -183,7 +184,7 @@ private[spark] class ApplicationInfo(
     }
 
   def markFinished(endState: ApplicationState.Value): Unit = {
-    finish(endState, 0, null)
+    finish(endState, JvmExitGuard.EXIT_SUCCESS, null)
   }
 
   def isFinished: Boolean = {

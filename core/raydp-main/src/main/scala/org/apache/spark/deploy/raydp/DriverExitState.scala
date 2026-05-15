@@ -21,10 +21,10 @@ object DriverExitState {
 
   case class Snapshot(state: ApplicationState.Value, exitCode: Int, diagnostics: String)
 
-  private var snapshot = Snapshot(ApplicationState.UNKNOWN, 0, null)
+  private var snapshot = Snapshot(ApplicationState.UNKNOWN, JvmExitGuard.EXIT_SUCCESS, null)
 
   def reset(): Unit = synchronized {
-    snapshot = Snapshot(ApplicationState.UNKNOWN, 0, null)
+    snapshot = Snapshot(ApplicationState.UNKNOWN, JvmExitGuard.EXIT_SUCCESS, null)
   }
 
   def current(): Snapshot = synchronized {
@@ -38,7 +38,7 @@ object DriverExitState {
   }
 
   def trySetFinished(): Boolean = synchronized {
-    trySet(ApplicationState.FINISHED, 0, null)
+    trySet(ApplicationState.FINISHED, JvmExitGuard.EXIT_SUCCESS, null)
   }
 
   def trySetFailed(exitCode: Int, diagnostics: String): Boolean = synchronized {
@@ -46,8 +46,8 @@ object DriverExitState {
   }
 
   def trySetKilled(exitCode: Int, diagnostics: String): Boolean = synchronized {
-    val normalizedExitCode = if (exitCode == 0) {
-      143
+    val normalizedExitCode = if (exitCode == JvmExitGuard.EXIT_SUCCESS) {
+      JvmExitGuard.EXIT_KILLED
     } else {
       exitCode
     }
@@ -67,8 +67,8 @@ object DriverExitState {
   }
 
   private def normalizedFailureCode(exitCode: Int): Int = {
-    if (exitCode == 0) {
-      1
+    if (exitCode == JvmExitGuard.EXIT_SUCCESS) {
+      JvmExitGuard.EXIT_APP_FAILED
     } else {
       exitCode
     }
