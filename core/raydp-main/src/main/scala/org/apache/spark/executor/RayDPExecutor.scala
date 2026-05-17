@@ -25,8 +25,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 import scala.reflect.classTag
 
-import com.sun.jna.{Library, Native}
 import com.intel.raydp.shims.SparkShimLoader
+import com.sun.jna.{Library, Native}
 import io.ray.api.Ray
 import io.ray.runtime.config.RayConfig
 import org.apache.arrow.vector.ipc.{ArrowStreamWriter, WriteChannel}
