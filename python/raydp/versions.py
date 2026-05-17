@@ -15,16 +15,23 @@
 # limitations under the License.
 #
 
-import re
+from packaging.version import InvalidVersion, Version
+
 import pyspark
+
+
+def _uses_log4j2(spark_version: str) -> bool:
+    try:
+        return Version(spark_version) >= Version("3.3")
+    except InvalidVersion as exc:
+        raise ValueError(f"Invalid Spark version: {spark_version}") from exc
 
 
 # log4j1 if spark version <= 3.2, otherwise, log4j2
 SPARK_LOG4J_VERSION = "log4j"
 SPARK_LOG4J_CONFIG_FILE_NAME_KEY = "log4j.configurationFile"
 SPARK_LOG4J_CONFIG_FILE_NAME_DEFAULT = "log4j-default.properties"
-_spark_ver = re.search("\\d+\\.\\d+", pyspark.version.__version__)
-if _spark_ver.group(0) > "3.2":
+if _uses_log4j2(pyspark.version.__version__):
     SPARK_LOG4J_VERSION = "log4j2"
     SPARK_LOG4J_CONFIG_FILE_NAME_KEY = "log4j2.configurationFile"
     SPARK_LOG4J_CONFIG_FILE_NAME_DEFAULT = "log4j2-default.properties"
