@@ -30,7 +30,7 @@ class RayExternalShuffleService() extends Logging {
 
   start()
 
-  def start(): Unit = {
+  final def start(): Unit = {
       instance.start()
   }
 
