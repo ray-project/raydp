@@ -35,6 +35,26 @@ def quiet_logger():
     koalas_logger = logging.getLogger("koalas")
     koalas_logger.setLevel(logging.WARNING)
 
+
+def _init_ray_client_with_retry(address, attempts=3, base_delay=2.0):
+    # Ray's proxier sometimes fails to fork a per-connection server worker
+    # (manifests as "Starting Ray client server failed" / ConnectionAbortedError).
+    # Retry a few times before giving up.
+    last_exc = None
+    for i in range(attempts):
+        try:
+            ray.init(address=address)
+            return
+        except (ConnectionAbortedError, RuntimeError) as e:
+            last_exc = e
+            try:
+                ray.shutdown()
+            except Exception:
+                pass
+            if i < attempts - 1:
+                time.sleep(base_delay * (i + 1))
+    raise last_exc
+
 @pytest.fixture(scope="function")
 def jdk17_extra_spark_configs() -> Dict[str, str]:
     # JDK 17+ requires --add-opens for reflective access and --add-exports for direct access
@@ -81,7 +101,7 @@ def ray_cluster(request):
     if request.param == "local":
         ray.init(address="local", num_cpus=6, include_dashboard=False)
     else:
-        ray.init(address=request.param)
+        _init_ray_client_with_retry(request.param)
     request.addfinalizer(lambda: ray.shutdown())
 
 
@@ -91,7 +111,7 @@ def spark_on_ray_small(request, jdk17_extra_spark_configs):
     if request.param == "local":
         ray.init(address="local", num_cpus=6, include_dashboard=False)
     else:
-        ray.init(address=request.param)
+        _init_ray_client_with_retry(request.param)
         if ray_client.ray.is_connected():
             ray.shutdown()
             pytest.skip("Skip Spark-on-Ray fixture in Ray client mode")
@@ -120,7 +140,7 @@ def spark_on_ray_2_executors(request, jdk17_extra_spark_configs):
     if request.param == "local":
         ray.init(address="local", num_cpus=6, include_dashboard=False)
     else:
-        ray.init(address=request.param)
+        _init_ray_client_with_retry(request.param)
         if ray_client.ray.is_connected():
             ray.shutdown()
             pytest.skip("Skip Spark-on-Ray fixture in Ray client mode")
