@@ -24,8 +24,10 @@ import org.apache.spark.executor.spark340._
 import org.apache.spark.spark340.TaskContextUtils
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.spark340.SparkSqlUtils
-import com.intel.raydp.shims.{ShimDescriptor, SparkShims}
+import com.intel.raydp.shims.{CommandLineUtilsBridge, ShimDescriptor, SparkShims}
 import org.apache.arrow.vector.types.pojo.Schema
+import org.apache.spark.deploy.spark340.SparkSubmitUtils
+import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.types.StructType
 
 class Spark340Shims extends SparkShims {
@@ -46,7 +48,22 @@ class Spark340Shims extends SparkShims {
     TaskContextUtils.getDummyTaskContext(partitionId, env)
   }
 
-  override def toArrowSchema(schema : StructType, timeZoneId : String) : Schema = {
-    SparkSqlUtils.toArrowSchema(schema = schema, timeZoneId = timeZoneId)
+  override def toArrowSchema(
+                             schema : StructType,
+                             timeZoneId : String,
+                             sparkSession: SparkSession) : Schema = {
+    SparkSqlUtils.toArrowSchema(
+      schema = schema,
+      timeZoneId = timeZoneId,
+      sparkSession = sparkSession
+    )
+  }
+
+  override def toArrowBatchRDD(dataFrame: DataFrame): RDD[Array[Byte]] = {
+    SparkSqlUtils.toArrowRDD(dataFrame, dataFrame.sparkSession)
+  }
+
+  override def getCommandLineUtilsBridge: CommandLineUtilsBridge = {
+    SparkSubmitUtils
   }
 }

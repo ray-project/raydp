@@ -24,13 +24,13 @@ import java.security.PrivilegedExceptionAction
 import java.text.ParseException
 import java.util.{ServiceLoader, UUID}
 import java.util.jar.JarInputStream
-import javax.ws.rs.core.UriBuilder
 
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 import scala.util.{Properties, Try}
 
+import com.intel.raydp.shims.SparkShimLoader
 import org.apache.commons.lang3.StringUtils
 import org.apache.hadoop.conf.{Configuration => HadoopConfiguration}
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -258,7 +258,10 @@ private[spark] class SparkSubmit extends Logging {
     }
 
     if (clusterManager == KUBERNETES) {
-      args.master = Utils.checkAndGetK8sMasterUrl(args.master)
+      val checkedMaster = Utils.checkAndGetK8sMasterUrl(args.master)
+      SparkShimLoader.getSparkShims
+        .getCommandLineUtilsBridge
+        .setSubmitMaster(args, checkedMaster)
       // Make sure KUBERNETES is included in our build if we're trying to use it
       if (!Utils.classIsLoadable(KUBERNETES_CLUSTER_SUBMIT_CLASS) && !Utils.isTesting) {
         error(
@@ -340,7 +343,7 @@ private[spark] class SparkSubmit extends Logging {
 
     // update spark config from args
     args.toSparkConf(Option(sparkConf))
-    val hadoopConf = conf.getOrElse(SparkHadoopUtil.newConfiguration(sparkConf))
+    val hadoopConf = conf.getOrElse(SparkHadoopUtil.get.newConfiguration(sparkConf))
     val targetDir = Utils.createTempDir()
 
     // Kerberos is not supported in standalone mode, and keytab support is not yet available
@@ -393,8 +396,10 @@ private[spark] class SparkSubmit extends Logging {
         val archiveLocalFiles = Option(args.archives).map { uris =>
           val resolvedUris = Utils.stringToSeq(uris).map(Utils.resolveURI)
           val localArchives = downloadFileList(
-            resolvedUris.map(
-              UriBuilder.fromUri(_).fragment(null).build().toString).mkString(","),
+            resolvedUris.map { uri =>
+              new URI(uri.getScheme,
+                uri.getRawSchemeSpecificPart, null).toString
+            }.mkString(","),
             targetDir, sparkConf, hadoopConf)
 
           // SPARK-33748: this mimics the behaviour of Yarn cluster mode. If the driver is running
@@ -413,8 +418,9 @@ private[spark] class SparkSubmit extends Logging {
               Utils.unpack(source, dest)
 
               // Keep the URIs of local files with the given fragments.
-              UriBuilder.fromUri(
-                localArchive).fragment(resolvedUri.getFragment).build().toString
+              new URI(localArchive.getScheme,
+                localArchive.getRawSchemeSpecificPart,
+                resolvedUri.getFragment).toString
           }.mkString(",")
         }.orNull
         args.files = filesLocalFiles
@@ -986,7 +992,12 @@ private[spark] object InProcessSparkSubmit {
 
 }
 
-object SparkSubmit extends CommandLineUtils with Logging {
+object SparkSubmit extends Logging {
+
+  var printStream: PrintStream = System.err
+  // scalastyle:off println
+  def printMessage(str: String): Unit = printStream.println(str)
+  // scalastyle:on println
 
   // Cluster managers
   private val YARN = 1
@@ -1019,7 +1030,7 @@ object SparkSubmit extends CommandLineUtils with Logging {
   private[deploy] val KUBERNETES_CLUSTER_SUBMIT_CLASS =
     "org.apache.spark.deploy.k8s.submit.KubernetesClientApplication"
 
-  override def main(args: Array[String]): Unit = {
+  def main(args: Array[String]): Unit = {
     val submit = new SparkSubmit() {
       self =>
 
@@ -1044,7 +1055,8 @@ object SparkSubmit extends CommandLineUtils with Logging {
           super.doSubmit(args)
         } catch {
           case e: SparkUserAppException =>
-            exitFn(e.exitCode)
+            SparkShimLoader.getSparkShims
+              .getCommandLineUtilsBridge.callExit(e.exitCode)
         }
       }
 
