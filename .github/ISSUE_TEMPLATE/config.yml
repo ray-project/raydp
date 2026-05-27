@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: RayDP documentation
+    url: https://github.com/ray-project/raydp#readme
+    about: Please check the README and docs before opening an issue.
