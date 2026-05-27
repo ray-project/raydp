@@ -50,6 +50,7 @@ import org.apache.ivy.plugins.resolver.{ChainResolver, FileSystemResolver, IBibl
 
 import org.apache.spark._
 import org.apache.spark.api.r.RUtils
+import org.apache.spark.deploy.raydp.{DriverAppMasterReporter, DriverExitState, JvmExitGuard}
 import org.apache.spark.deploy.rest._
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config._
@@ -1011,6 +1012,20 @@ object SparkSubmit extends CommandLineUtils with Logging {
 
   private val CLASS_NOT_FOUND_EXIT_STATUS = 101
 
+  private def finalizeDriverTermination(): Unit = {
+    val snapshot = DriverExitState.current()
+    if (DriverExitState.isTerminal(snapshot.state)) {
+      DriverAppMasterReporter.tryReportAndCleanup()
+      JvmExitGuard.arm(snapshot.exitCode)
+    }
+  }
+
+  private def describeFailure(t: Throwable): String = {
+    val message = Option(t.getMessage).filter(_.nonEmpty)
+      .getOrElse("No additional diagnostics available.")
+    s"${t.getClass.getName}: $message"
+  }
+
   // Following constants are visible for testing.
   private[deploy] val YARN_CLUSTER_SUBMIT_CLASS =
     "org.apache.spark.deploy.yarn.YarnClusterApplication"
@@ -1020,6 +1035,19 @@ object SparkSubmit extends CommandLineUtils with Logging {
     "org.apache.spark.deploy.k8s.submit.KubernetesClientApplication"
 
   override def main(args: Array[String]): Unit = {
+    DriverExitState.reset()
+    DriverAppMasterReporter.reset()
+    val originalExitFn = exitFn
+    exitFn = (exitCode: Int) => {
+      if (exitCode == JvmExitGuard.EXIT_SUCCESS) {
+        DriverExitState.trySetFinished()
+      } else {
+        DriverExitState.trySetFailed(exitCode, s"SparkSubmit exited with status $exitCode")
+      }
+      finalizeDriverTermination()
+      originalExitFn(exitCode)
+    }
+
     val submit = new SparkSubmit() {
       self =>
 
@@ -1050,7 +1078,18 @@ object SparkSubmit extends CommandLineUtils with Logging {
 
     }
 
-    submit.doSubmit(args)
+    try {
+      submit.doSubmit(args)
+      DriverExitState.trySetFinished()
+      finalizeDriverTermination()
+    } catch {
+      case t: Throwable =>
+        DriverExitState.trySetFailed(JvmExitGuard.EXIT_APP_FAILED, describeFailure(t))
+        finalizeDriverTermination()
+        throw t
+    } finally {
+      exitFn = originalExitFn
+    }
   }
 
   /**

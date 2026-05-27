@@ -59,7 +59,12 @@ class RayCoarseGrainedSchedulerBackend(
 
   private val launcherBackend = new LauncherBackend() {
     override protected def conf: SparkConf = sc.conf
-    override protected def onStopRequest(): Unit = stop(SparkAppHandle.State.KILLED)
+    override protected def onStopRequest(): Unit = {
+      DriverExitState.trySetKilled(
+        JvmExitGuard.EXIT_KILLED,
+        "Spark launcher requested application stop.")
+      stop(SparkAppHandle.State.KILLED)
+    }
   }
 
   def prependPreferPath(cp: String): String = {
@@ -93,6 +98,7 @@ class RayCoarseGrainedSchedulerBackend(
 
         masterHandle = RayAppMasterUtils.createAppMaster(cp, null, options.toBuffer.asJava,
           appMasterResources.toMap.asJava)
+        DriverAppMasterReporter.bindMasterHandle(masterHandle)
         uri = new URI(RayAppMasterUtils.getMasterUrl(masterHandle))
       } else {
         uri = new URI(sparkUrl)
@@ -195,9 +201,6 @@ class RayCoarseGrainedSchedulerBackend(
 
   override def stop(): Unit = {
     stop(SparkAppHandle.State.FINISHED)
-    if (masterHandle != null) {
-      RayAppMasterUtils.stopAppMaster(masterHandle)
-    }
   }
 
   def parseRayDPResourceRequirements(sparkConf: SparkConf): Map[String, Double] = {
@@ -259,6 +262,7 @@ class RayCoarseGrainedSchedulerBackend(
         appId.set(id)
         launcherBackend.setAppId(id)
         appMasterRef.set(ref)
+        DriverAppMasterReporter.bind(id)
         registrationBarrier.release()
     }
 
@@ -304,7 +308,10 @@ class RayCoarseGrainedSchedulerBackend(
     if (stopped.compareAndSet(false, true)) {
       try {
         super.stop() // this will stop all executors
-        appMasterRef.get.send(UnregisterApplication(appId.get))
+        if (finalState == SparkAppHandle.State.KILLED) {
+          DriverAppMasterReporter.tryReportAndCleanup()
+          JvmExitGuard.arm(DriverExitState.current().exitCode)
+        }
       } finally {
         appMasterRef.set(null)
         launcherBackend.setState(finalState)

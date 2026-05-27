@@ -25,6 +25,7 @@ import io.ray.api.ActorHandle
 
 import org.apache.spark.executor.RayDPExecutor
 import org.apache.spark.internal.Logging
+import org.apache.spark.deploy.raydp.JvmExitGuard
 import org.apache.spark.raydp.RayExecutorUtils
 import org.apache.spark.resource.ResourceInformation
 import org.apache.spark.rpc.{RpcAddress, RpcEndpointRef}
@@ -53,6 +54,8 @@ private[spark] class ApplicationInfo(
   var removedExecutors: ArrayBuffer[ExecutorDesc] = _
   var coresGranted: Int = _
   var endTime: Long = _
+  var exitCode: Int = _
+  var diagnostics: String = _
   private var nextExecutorId: Int = _
   // this only count those registered executors and minus removed executors
   private var registeredExecutors: Int = 0
@@ -65,6 +68,8 @@ private[spark] class ApplicationInfo(
     addressToExecutorId = new HashMap[RpcAddress, String]
     executorIdToHandler = new HashMap[String, ActorHandle[RayDPExecutor]]
     endTime = -1L
+    exitCode = JvmExitGuard.EXIT_SUCCESS
+    diagnostics = null
     nextExecutorId = 0
     removedExecutors = new ArrayBuffer[ExecutorDesc]
   }
@@ -165,9 +170,21 @@ private[spark] class ApplicationInfo(
 
   def resetRetryCount(): Unit = _retryCount = 0
 
+  def finish(endState: ApplicationState.Value, endExitCode: Int, endDiagnostics: String): Boolean =
+    synchronized {
+      if (isFinished) {
+        false
+      } else {
+        state = endState
+        exitCode = endExitCode
+        diagnostics = endDiagnostics
+        endTime = System.currentTimeMillis()
+        true
+      }
+    }
+
   def markFinished(endState: ApplicationState.Value): Unit = {
-    state = endState
-    endTime = System.currentTimeMillis()
+    finish(endState, JvmExitGuard.EXIT_SUCCESS, null)
   }
 
   def isFinished: Boolean = {
