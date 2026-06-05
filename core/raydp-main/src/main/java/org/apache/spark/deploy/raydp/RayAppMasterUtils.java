@@ -43,6 +43,7 @@ public class RayAppMasterUtils {
               .substring(SparkOnRayConfigs.SPARK_MASTER_ACTOR_RESOURCE_PREFIX.length() + 1);
       creator.setResource(resourceName, resource.getValue());
     }
+    creator.setMaxTaskRetries(3);
 
     return creator.remote();
   }
@@ -55,6 +56,16 @@ public class RayAppMasterUtils {
   public static Map<String, String> getRestartedExecutors(
       ActorHandle<RayAppMaster> handle) {
     return handle.task(RayAppMaster::getRestartedExecutors).remote().get();
+  }
+
+  public static boolean finishApplication(
+      ActorHandle<RayAppMaster> handle,
+      String appId,
+      String stateName,
+      int exitCode,
+      String diagnostics) {
+    return handle.task(RayAppMaster::finishApplication, appId, stateName, exitCode, diagnostics)
+            .remote().get();
   }
 
   public static void stopAppMaster(

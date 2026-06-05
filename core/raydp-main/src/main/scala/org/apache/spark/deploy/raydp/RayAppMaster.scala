@@ -83,6 +83,15 @@ class RayAppMaster(host: String,
 
   def getRestartedExecutors(): java.util.Map[String, String] = restartedExecutors.asJava
 
+  def finishApplication(
+      appId: String,
+      stateName: String,
+      exitCode: Int,
+      diagnostics: String): Boolean = {
+    endpoint.askSync[Boolean](
+      FinishApplication(appId, ApplicationState.withName(stateName), exitCode, diagnostics))
+  }
+
   /**
    * This is used to represent the Spark on Ray cluster URL.
    */
@@ -141,13 +150,13 @@ class RayAppMaster(host: String,
         logInfo("Registered app " + appDescription.name + " with ID " + app.id)
         driver.send(RegisteredApplication(app.id, self))
         schedule()
-
-      case UnregisterApplication(appId) =>
-        assert(appInfo != null && appInfo.id == appId)
-        appInfo.markFinished(ApplicationState.FINISHED)
     }
 
     override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
+      case FinishApplication(appId, state, exitCode, diagnostics) =>
+        assert(appInfo != null && appInfo.id == appId)
+        context.reply(appInfo.finish(state, exitCode, diagnostics))
+
       case RegisterExecutor(executorId, executorIp) =>
         val success = appInfo.registerExecutor(executorId)
         if (success) {
