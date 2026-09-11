@@ -24,3 +24,16 @@ trait SparkShimProvider {
   def matches(version:String): Boolean
   def createShim: SparkShims
 }
+
+/**
+ * Provider that claims every patch release of one Spark `major.minor` line.
+ *
+ * Spark keeps patch releases source and binary compatible within a minor line, so a single shim
+ * covers the whole line and a newly published patch needs no change here. Enumerating patches
+ * instead means a new patch fails shim resolution at runtime until someone widens the list.
+ */
+abstract class SparkMinorLineShimProvider(major: Int, minor: Int) extends SparkShimProvider {
+  override def matches(version: String): Boolean = {
+    SparkShimDescriptor.parse(version).exists(d => d.major == major && d.minor == minor)
+  }
+}

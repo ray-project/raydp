@@ -15,17 +15,16 @@
  * limitations under the License.
  */
 
-package com.intel.raydp.shims.spark400
+package org.apache.spark.spark420
 
-import com.intel.raydp.shims.{SparkShims, SparkShimDescriptor}
+import java.util.Properties
 
-object SparkShimProvider {
-  val DESCRIPTOR = SparkShimDescriptor(4, 0, 0)
-}
+import org.apache.spark.{SparkEnv, TaskContext, TaskContextImpl}
+import org.apache.spark.memory.TaskMemoryManager
 
-class SparkShimProvider
-  extends com.intel.raydp.shims.SparkMinorLineShimProvider(4, 0) {
-  def createShim: SparkShims = {
-    new Spark400Shims()
+object TaskContextUtils {
+  def getDummyTaskContext(partitionId: Int, env: SparkEnv): TaskContext = {
+    new TaskContextImpl(0, 0, partitionId, -1024, 0, 0,
+        new TaskMemoryManager(env.memoryManager, 0), new Properties(), env.metricsSystem)
   }
 }

@@ -31,6 +31,20 @@ case class SparkShimDescriptor(major: Int, minor: Int, patch: Int) extends ShimD
   override def toString(): String = s"$major.$minor.$patch"
 }
 
+object SparkShimDescriptor {
+  private val VersionPattern = """(\d+)\.(\d+)\.(\d+).*""".r
+
+  /**
+   * Parses a Spark version into a descriptor, ignoring any qualifier such as `-SNAPSHOT` or
+   * `-preview1`. Returns None when the version has no `major.minor.patch` prefix.
+   */
+  def parse(version: String): Option[SparkShimDescriptor] = version match {
+    case VersionPattern(major, minor, patch) =>
+      Some(SparkShimDescriptor(major.toInt, minor.toInt, patch.toInt))
+    case _ => None
+  }
+}
+
 trait SparkShims {
   def getShimDescriptor: ShimDescriptor
 

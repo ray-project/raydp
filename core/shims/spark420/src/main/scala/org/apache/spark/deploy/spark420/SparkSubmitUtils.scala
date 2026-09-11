@@ -15,17 +15,19 @@
  * limitations under the License.
  */
 
-package com.intel.raydp.shims.spark400
+package org.apache.spark.deploy.spark420
 
-import com.intel.raydp.shims.{SparkShims, SparkShimDescriptor}
+import org.apache.spark.deploy.SparkSubmitArguments
+import org.apache.spark.util.CommandLineUtils
+import com.intel.raydp.shims.CommandLineUtilsBridge
 
-object SparkShimProvider {
-  val DESCRIPTOR = SparkShimDescriptor(4, 0, 0)
-}
+object SparkSubmitUtils
+    extends CommandLineUtils with CommandLineUtilsBridge {
+  override def main(args: Array[String]): Unit = {}
 
-class SparkShimProvider
-  extends com.intel.raydp.shims.SparkMinorLineShimProvider(4, 0) {
-  def createShim: SparkShims = {
-    new Spark400Shims()
+  override def callExit(code: Int): Unit = exitFn(code, None)
+
+  override def setSubmitMaster(args: Any, master: String): Unit = {
+    args.asInstanceOf[SparkSubmitArguments].maybeMaster = Some(master)
   }
 }

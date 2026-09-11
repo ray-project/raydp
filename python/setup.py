@@ -101,7 +101,7 @@ try:
         "psutil",
         "pyarrow >= 4.0.1",
         "ray >= 2.37.0",
-        "pyspark >= 4.0.0, <= 4.1.1",
+        "pyspark >= 4.0.0, < 4.3.0",
         "protobuf > 3.19.5"
     ]
 

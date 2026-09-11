@@ -33,7 +33,7 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         python-version: ["3.10", "3.11"]
-        spark-version: [4.0.0, 4.1.0]
+        spark-version: [4.0.0, 4.1.0, 4.2.0]
         ray-version: [2.37.0, 2.40.0, 2.50.0]
 
     runs-on: ${{ matrix.os }}

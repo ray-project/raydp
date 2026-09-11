@@ -20,18 +20,12 @@ package com.intel.raydp.shims.spark410
 import com.intel.raydp.shims.{SparkShims, SparkShimDescriptor}
 
 object SparkShimProvider {
-  private val SUPPORTED_PATCHES = 0 to 1
-  val DESCRIPTORS = SUPPORTED_PATCHES.map(p => SparkShimDescriptor(4, 1, p))
-  val DESCRIPTOR_STRINGS = DESCRIPTORS.map(_.toString)
-  val DESCRIPTOR = DESCRIPTORS.head
+  val DESCRIPTOR = SparkShimDescriptor(4, 1, 0)
 }
 
-class SparkShimProvider extends com.intel.raydp.shims.SparkShimProvider {
+class SparkShimProvider
+  extends com.intel.raydp.shims.SparkMinorLineShimProvider(4, 1) {
   def createShim: SparkShims = {
     new Spark410Shims()
-  }
-
-  def matches(version: String): Boolean = {
-    SparkShimProvider.DESCRIPTOR_STRINGS.contains(version)
   }
 }

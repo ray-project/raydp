@@ -15,17 +15,17 @@
  * limitations under the License.
  */
 
-package com.intel.raydp.shims.spark400
+package com.intel.raydp.shims.spark420
 
 import com.intel.raydp.shims.{SparkShims, SparkShimDescriptor}
 
 object SparkShimProvider {
-  val DESCRIPTOR = SparkShimDescriptor(4, 0, 0)
+  val DESCRIPTOR = SparkShimDescriptor(4, 2, 0)
 }
 
 class SparkShimProvider
-  extends com.intel.raydp.shims.SparkMinorLineShimProvider(4, 0) {
+  extends com.intel.raydp.shims.SparkMinorLineShimProvider(4, 2) {
   def createShim: SparkShims = {
-    new Spark400Shims()
+    new Spark420Shims()
   }
 }
