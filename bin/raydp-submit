@@ -162,27 +162,16 @@ fi
 # class path for spark driver, ray's prefer class path can be set by 'spark.ray.preferClassPath' which is passed down to ray in spark conf
 RAYDP_CLASS_PATH="-cp $SPARK_PREF_CP$RAYDP_HOME/jars/*:$SPARK_HOME/conf:$SPARK_HOME/jars/*:$RAY_HOME/jars/*"
 
-# merge all
-new_args=()
-	for e in "${args[@]::${#args[@]}-1}"
-do
-		new_args+=("$e")
-done
-	for e in "${added_args[@]}"
-do
-		new_args+=("$e")
-done
-	new_args+=("${args[${#args[@]}-1]}")
-
-# set arguments
-set -- "${new_args[@]}"
+# Keep user arguments intact. Generated defaults are passed before them below,
+# so application arguments stay after the resource and explicit configs win.
+set -- "${args[@]}"
 
 echo "$@"
 
 if [ $1 == "--ray-conf" ]; then
   RAY_CONF=$2
   shift 2
-  $RUNNER $RAYDP_CLASS_PATH -Dray.config-file=$RAY_CONF "${added_confs[@]}"  org.apache.spark.deploy.SparkSubmit --master ray "$@"
+  $RUNNER $RAYDP_CLASS_PATH -Dray.config-file="$RAY_CONF" "${added_confs[@]}"  org.apache.spark.deploy.SparkSubmit --master ray "${added_args[@]}" "$@"
 else
-  $RUNNER $RAYDP_CLASS_PATH "${added_confs[@]}" org.apache.spark.deploy.SparkSubmit --master ray "$@"
+  $RUNNER $RAYDP_CLASS_PATH "${added_confs[@]}" org.apache.spark.deploy.SparkSubmit --master ray "${added_args[@]}" "$@"
 fi
