@@ -199,21 +199,18 @@ class RayAppMaster(host: String,
         context.reply(success)
 
       case RequestAddPendingRestartedExecutor(actorId) =>
-        val cores = appInfo.desc.coresPerExecutor.getOrElse(1)
-        val memory = appInfo.desc.memoryPerExecutorMB
-        // ray actor will restart using the old ID
-        val handlerOpt = Ray.getActor("raydp-executor-" + actorId)
-        if (!handlerOpt.isPresent) {
-          context.reply(AddPendingRestartedExecutorReply(None))
-        } else if (!appInfo.actorSlots.contains(actorId)) {
-          // The actor may still be visible in Ray after Spark has scaled the slot down.
-          // Do not allow a late restart request to recreate a removed executor.
-          context.reply(AddPendingRestartedExecutorReply(None))
-        } else {
-          val newExecutorId = s"${appInfo.getNextExecutorId()}"
-          val handler = handlerOpt.get.asInstanceOf[ActorHandle[RayDPExecutor]]
-          appInfo.addPendingRegisterExecutor(newExecutorId, actorId, handler, cores, memory)
-          context.reply(AddPendingRestartedExecutorReply(Some(newExecutorId)))
+        appInfo.actorSlots.get(actorId) match {
+          case Some(slot) =>
+            // Keep the original owner handle reachable across executor generations instead of
+            // replacing it with a named-lookup handle when the same Ray actor restarts.
+            val cores = appInfo.desc.coresPerExecutor.getOrElse(1)
+            val memory = appInfo.desc.memoryPerExecutorMB
+            val newExecutorId = s"${appInfo.getNextExecutorId()}"
+            appInfo.addPendingRegisterExecutor(newExecutorId, actorId, slot.handle, cores, memory)
+            context.reply(AddPendingRestartedExecutorReply(Some(newExecutorId)))
+          case None =>
+            // Do not allow a late restart request to recreate a removed actor slot.
+            context.reply(AddPendingRestartedExecutorReply(None))
         }
     }
 
