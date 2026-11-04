@@ -132,9 +132,11 @@ try:
             'build_proto_modules': CustomBuildPackageProtos,
         },
         install_requires=install_requires,
+        # TensorFlow 2.15 requires numpy<2, while pyarrow>=26 fails to import without numpy>=2
+        # (and pyarrow does not declare numpy as a dependency), so cap pyarrow with TensorFlow.
         extras_require={
-            "tensorflow": ["tensorflow>=2.15.1,<2.16"],
-            "tensorflow-gpu": ["tensorflow[and-cuda]>=2.15.1,<2.16"],
+            "tensorflow": ["tensorflow>=2.15.1,<2.16", "pyarrow<26"],
+            "tensorflow-gpu": ["tensorflow[and-cuda]>=2.15.1,<2.16", "pyarrow<26"],
         },
         setup_requires=["grpcio-tools"],
         python_requires='>=3.10',
