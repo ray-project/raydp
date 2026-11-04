@@ -66,7 +66,8 @@ jobs:
         pip install "numpy<1.24" "click<8.3.0"
         pip install "pydantic<2.0"
         pip install torch --index-url https://download.pytorch.org/whl/cpu
-        pip install pyarrow "ray[train,default]==${{ env.RAY_VERSION }}" tqdm pytest tensorflow==2.16.1 tf_keras tabulate grpcio-tools wget
+        # pyarrow>=26 needs numpy>=2, which conflicts with the numpy<1.24 pin above.
+        pip install "pyarrow<26" "ray[train,default]==${{ env.RAY_VERSION }}" tqdm pytest tensorflow==2.16.1 tf_keras tabulate grpcio-tools wget
         pip install "xgboost_ray[default]<=0.1.13"
         pip install "xgboost<=2.0.3"
         pip install torchmetrics
