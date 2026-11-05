@@ -19,6 +19,7 @@ import os
 import sys
 import time
 import platform
+from unittest import mock
 import pytest
 import pyarrow
 import ray
@@ -28,6 +29,7 @@ from ray.util.placement_group import placement_group_table
 
 import raydp
 import raydp.utils as utils
+from raydp.context import _SparkContext
 from raydp.spark.ray_cluster_master import RAYDP_SPARK_MASTER_SUFFIX
 from ray.cluster_utils import Cluster
 import ray.util.client as ray_client
@@ -269,6 +271,21 @@ def test_placement_group(ray_cluster, jdk17_extra_spark_configs):
         if p["state"] != "REMOVED"
     ])
     assert num_non_removed_pgs == 0
+
+
+def test_spark_context_does_not_mutate_user_configs():
+    configs = {"spark.executor.extraJavaOptions": "-Dfoo=bar"}
+    expected = dict(configs)
+    pg = mock.MagicMock()
+    pg.id.hex.return_value = "fake_pg_id"
+    pg.bundle_count = 1
+    spark_context = _SparkContext("test_configs", 1, 1, "500M", False, False,
+                                  None, pg, None, configs)
+    spark_context._prepare_placement_group()
+    assert spark_context._configs[_SparkContext._PLACEMENT_GROUP_CONF] == "fake_pg_id"
+    # The placement group id must not leak into the caller's dict, otherwise reusing it
+    # in a later init_spark call points executors at a removed placement group.
+    assert configs == expected
 
 
 def test_reconstruction(jdk17_extra_spark_configs):

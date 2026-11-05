@@ -100,7 +100,9 @@ class _SparkContext(ContextDecorator):
         self._placement_group = placement_group
         self._placement_group_bundle_indexes = placement_group_bundle_indexes
 
-        self._configs = {} if configs is None else configs
+        # Copy the user's configs so that the values RayDP adds (placement group id,
+        # classpath, Java agent options) do not leak into the caller's dict.
+        self._configs = {} if configs is None else dict(configs)
 
         self._spark_cluster: Optional[SparkCluster] = None
         self._spark_session: Optional[SparkSession] = None
