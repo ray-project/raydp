@@ -89,7 +89,7 @@ RayDP supports External Shuffle Service. To enable it, you can either set `spark
 raydp.init_spark(..., configs={"spark.shuffle.service.enabled": "true"})
 ```
 
-The user-provided config will overwrite those specified in `spark-defaults.conf`. By default Spark will load `spark-defaults.conf` from `$SPARK_HOME/conf`, you can also modify this location by setting `SPARK_CONF_DIR`.
+The user-provided config will overwrite those specified in `spark-defaults.conf`. RayDP does not modify the dict you pass in: it works on a copy, so the same dict can be reused across `init_spark` calls. By default Spark will load `spark-defaults.conf` from `$SPARK_HOME/conf`, you can also modify this location by setting `SPARK_CONF_DIR`.
 
 Similarly, you can also enable Dynamic Executor Allocation this way. However, currently you must use Dynamic Executor Allocation with data persistence. You can write the data frame in spark to HDFS as a parquet as shown below:
 

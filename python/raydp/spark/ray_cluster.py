@@ -46,7 +46,9 @@ class SparkCluster(Cluster):
         self._executor_cores = executor_cores
         self._executor_memory = executor_memory
         self._enable_hive = enable_hive
-        self._configs = configs
+        # Work on a copy: _prepare_spark_configs adds and appends values, and those
+        # must not leak into (or accumulate in) the caller's dict.
+        self._configs = dict(configs) if configs else {}
         self._prepare_spark_configs()
         self._set_up_master(resources=self._get_master_resources(self._configs), kwargs=None)
         self._spark_session: SparkSession = None
