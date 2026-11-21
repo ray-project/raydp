@@ -25,6 +25,8 @@ import io.ray.api.placementgroup.PlacementGroup;
 import io.ray.runtime.object.ObjectRefImpl;
 import java.util.List;
 import java.util.Map;
+import org.apache.spark.deploy.raydp.RayAppMaster;
+import org.apache.spark.deploy.raydp.RayAppMasterUtils;
 import org.apache.spark.executor.RayDPExecutor;
 
 public class RayExecutorUtils {
@@ -73,6 +75,28 @@ public class RayExecutorUtils {
   public static String[] getBlockLocations(
       ActorHandle<RayDPExecutor> handler, int rddId, int numPartitions) {
     return handler.task(RayDPExecutor::getBlockLocations, rddId, numPartitions).remote().get();
+  }
+
+  /** Return each partition's Spark executor id and named Ray actor id. */
+  public static RayDPBlockLocation[] getBlockLocations(
+      ActorHandle<RayDPExecutor> handler,
+      ActorHandle<RayAppMaster> appMaster,
+      int rddId,
+      int numPartitions) {
+    String[] executorIds = getBlockLocations(handler, rddId, numPartitions);
+    Map<String, String> restartedExecutors = RayAppMasterUtils.getRestartedExecutors(appMaster);
+    return resolveBlockLocations(executorIds, restartedExecutors);
+  }
+
+  static RayDPBlockLocation[] resolveBlockLocations(
+      String[] executorIds, Map<String, String> restartedExecutors) {
+    RayDPBlockLocation[] locations = new RayDPBlockLocation[executorIds.length];
+    for (int partitionId = 0; partitionId < executorIds.length; partitionId++) {
+      String executorId = executorIds[partitionId];
+      String actorId = restartedExecutors.getOrDefault(executorId, executorId);
+      locations[partitionId] = new RayDPBlockLocation(executorId, actorId);
+    }
+    return locations;
   }
 
   public static ObjectRef<byte[]> getRDDPartition(
