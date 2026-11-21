@@ -43,7 +43,8 @@ case class ExecutorDesc(
 }
 
 private[spark] class ExecutorActorSlot(
-    var handle: ActorHandle[RayDPExecutor],
+    // Retain the creation-time handle until this actor slot is released.
+    val handle: ActorHandle[RayDPExecutor],
     var currentExecutorId: Option[String],
     var previousExecutorId: Option[String])
 
@@ -90,10 +91,10 @@ private[spark] class ApplicationInfo(
       cores: Int,
       memoryInMB: Int): Unit = {
     // Adding a pending executor also declares that its Ray actor slot is still active.
+    // The supplied handle is used only when creating the slot; existing slots retain theirs.
     // For restarted executors, actorId points back to the original named Ray actor.
     val slot = actorSlots.getOrElseUpdate(
       actorId, new ExecutorActorSlot(handler, None, None))
-    slot.handle = handler
     slot.currentExecutorId = Some(executorId)
     val desc = ExecutorDesc(executorId, actorId, cores, memoryInMB, null)
     executors(executorId) = desc

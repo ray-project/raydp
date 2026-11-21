@@ -23,7 +23,7 @@ import java.util.Date
 import scala.collection.mutable.ArrayBuffer
 
 import io.ray.api.ActorHandle
-import org.junit.jupiter.api.Assertions.{assertEquals, assertFalse, assertTrue}
+import org.junit.jupiter.api.Assertions.{assertEquals, assertFalse, assertSame, assertTrue}
 import org.junit.jupiter.api.Test
 
 import org.apache.spark.executor.RayDPExecutor
@@ -95,6 +95,19 @@ class ApplicationInfoTest {
       executorId: String,
       actorId: String): Unit = {
     app.addPendingRegisterExecutor(executorId, actorId, handle(actorId), Cores, MemoryMB)
+  }
+
+  @Test
+  def existingSlotRetainsItsCreationTimeHandle(): Unit = {
+    val app = newApp()
+    val owner = handle("23")
+    app.addPendingRegisterExecutor("23", "23", owner, Cores, MemoryMB)
+    app.kill("23", shutdownActor = false)
+
+    app.addPendingRegisterExecutor("1002", "23", handle("lookup"), Cores, MemoryMB)
+
+    assertSame(owner, app.actorSlots("23").handle)
+    assertSame(owner, app.getExecutorHandler("1002").get)
   }
 
   @Test
