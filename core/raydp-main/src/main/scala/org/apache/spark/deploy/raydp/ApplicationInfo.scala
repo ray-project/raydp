@@ -43,7 +43,8 @@ case class ExecutorDesc(
 }
 
 private[spark] class ExecutorActorSlot(
-    // Retain the creation-time handle until this actor slot is released.
+    // Retain the creation-time handle until slot release. Named lookups do not keep actors
+    // alive in Ray versions with weak lookup semantics (ray-project/ray#45699).
     val handle: ActorHandle[RayDPExecutor],
     var currentExecutorId: Option[String],
     var previousExecutorId: Option[String])

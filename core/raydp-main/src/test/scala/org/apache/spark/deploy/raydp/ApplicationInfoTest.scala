@@ -33,7 +33,8 @@ import org.apache.spark.executor.RayDPExecutor
  *
  * A Ray actor keeps one logical slot across restarts while Spark assigns a new executor id to
  * every restarted generation, so slot accounting and generation accounting have to be asserted
- * independently. These tests drive the state machine directly, which makes the disconnect and
+ * independently. Handle checks cover Java object identity, not native reference counting or GC.
+ * These tests drive the state machine directly, which makes the disconnect and
  * late-kill orderings deterministic instead of racy.
  */
 class ApplicationInfoTest {
