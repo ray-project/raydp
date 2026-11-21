@@ -199,6 +199,7 @@ class RayAppMaster(host: String,
         context.reply(success)
 
       case RequestAddPendingRestartedExecutor(actorId) =>
+        assert(appInfo != null)
         val executorId = appInfo.addPendingRestartedExecutor(actorId)
         context.reply(AddPendingRestartedExecutorReply(executorId))
     }
