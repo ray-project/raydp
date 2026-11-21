@@ -199,19 +199,8 @@ class RayAppMaster(host: String,
         context.reply(success)
 
       case RequestAddPendingRestartedExecutor(actorId) =>
-        appInfo.actorSlots.get(actorId) match {
-          case Some(slot) =>
-            // Keep the original owner handle reachable across executor generations instead of
-            // replacing it with a named-lookup handle when the same Ray actor restarts.
-            val cores = appInfo.desc.coresPerExecutor.getOrElse(1)
-            val memory = appInfo.desc.memoryPerExecutorMB
-            val newExecutorId = s"${appInfo.getNextExecutorId()}"
-            appInfo.addPendingRegisterExecutor(newExecutorId, actorId, slot.handle, cores, memory)
-            context.reply(AddPendingRestartedExecutorReply(Some(newExecutorId)))
-          case None =>
-            // Do not allow a late restart request to recreate a removed actor slot.
-            context.reply(AddPendingRestartedExecutorReply(None))
-        }
+        val executorId = appInfo.addPendingRestartedExecutor(actorId)
+        context.reply(AddPendingRestartedExecutorReply(executorId))
     }
 
     override def onDisconnected(remoteAddress: RpcAddress): Unit = {

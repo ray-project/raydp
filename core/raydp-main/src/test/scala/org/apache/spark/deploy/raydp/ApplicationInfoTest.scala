@@ -44,15 +44,18 @@ class ApplicationInfoTest {
   /**
    * Records actor shutdowns rather than calling into Ray, which would need a live runtime.
    */
-  private class TestApplicationInfo(numExecutors: Int)
+  private class TestApplicationInfo(
+      numExecutors: Int,
+      appCores: Option[Int] = Some(Cores),
+      appMemoryMB: Int = MemoryMB)
     extends ApplicationInfo(
       startTime = 0L,
       id = "app-test",
       desc = ApplicationDescription(
         name = "test",
         numExecutors = numExecutors,
-        coresPerExecutor = Some(Cores),
-        memoryPerExecutorMB = MemoryMB,
+        coresPerExecutor = appCores,
+        memoryPerExecutorMB = appMemoryMB,
         rayActorCPU = 1.0,
         command = Command("driver-url", Map.empty, Seq.empty, Seq.empty, Seq.empty)),
       submitDate = new Date(0L),
@@ -223,5 +226,88 @@ class ApplicationInfoTest {
     assertEquals(0, app.numActorsToAdd)
     // The restarted generation maps back to its original actor for named-actor lookup.
     assertEquals(Map("1002" -> "1"), app.getRestartedExecutors)
+  }
+
+  @Test
+  def consecutiveRestartsRetainTheOriginalOwnerHandle(): Unit = {
+    val app = newApp()
+    val initialId = app.getNextExecutorId().toString
+    register(app, initialId, initialId)
+    assertTrue(app.registerExecutor(initialId))
+    val owner = app.actorSlots(initialId).handle
+    var previousId = initialId
+
+    for (executorId <- Seq("1", "2")) {
+      assertTrue(app.kill(previousId, shutdownActor = false))
+      assertEquals(Some(executorId), app.addPendingRestartedExecutor(initialId))
+      assertSame(owner, app.actorSlots(initialId).handle)
+      assertSame(owner, app.getExecutorHandler(executorId).get)
+      assertEquals(Some(executorId), app.actorSlots(initialId).currentExecutorId)
+      assertEquals(Some(previousId), app.actorSlots(initialId).previousExecutorId)
+      assertEquals(Set(executorId), app.executors.keySet.toSet)
+      assertEquals(Map(executorId -> initialId), app.getRestartedExecutors)
+      assertEquals(1, app.actorSlots.size)
+      assertEquals(0, app.numActorsToAdd)
+      assertTrue(app.registerExecutor(executorId))
+      previousId = executorId
+    }
+    assertTrue(app.exitedActors.isEmpty)
+  }
+
+  @Test
+  def removedSlotRejectsLateRestartWithoutAllocatingAnExecutorId(): Unit = {
+    val app = newApp()
+    val initialId = app.getNextExecutorId().toString
+    register(app, initialId, initialId)
+    assertTrue(app.kill(initialId, shutdownActor = false))
+    assertTrue(app.kill(initialId, shutdownActor = true))
+    app.updateDesiredExecutors(0)
+
+    assertEquals(None, app.addPendingRestartedExecutor(initialId))
+    assertTrue(app.actorSlots.isEmpty)
+    assertTrue(app.executors.isEmpty)
+    assertTrue(app.executorIdToActorId.isEmpty)
+    assertEquals(Seq(initialId), app.exitedActors.toSeq)
+    assertEquals(0, app.numActorsToAdd)
+    assertEquals(1, app.getNextExecutorId())
+  }
+
+  @Test
+  def unknownSlotRejectsRestartWithoutChangingExistingSlots(): Unit = {
+    val app = newApp()
+    val initialId = app.getNextExecutorId().toString
+    register(app, initialId, initialId)
+    val owner = app.actorSlots(initialId).handle
+
+    assertEquals(None, app.addPendingRestartedExecutor("unknown"))
+    assertSame(owner, app.actorSlots(initialId).handle)
+    assertEquals(Set(initialId), app.actorSlots.keySet.toSet)
+    assertEquals(Set(initialId), app.executors.keySet.toSet)
+    assertEquals(Map(initialId -> initialId), app.executorIdToActorId.toMap)
+    assertEquals(1, app.getNextExecutorId())
+  }
+
+  @Test
+  def restartedExecutorUsesApplicationResources(): Unit = {
+    val app = new TestApplicationInfo(1, Some(3), 1024)
+    val initialId = app.getNextExecutorId().toString
+    app.addPendingRegisterExecutor(initialId, initialId, handle(initialId), 7, 256)
+    app.kill(initialId, shutdownActor = false)
+
+    assertEquals(Some("1"), app.addPendingRestartedExecutor(initialId))
+    assertEquals(3, app.executors("1").cores)
+    assertEquals(1024, app.executors("1").memoryPerExecutorMB)
+  }
+
+  @Test
+  def restartedExecutorUsesDefaultCoresWhenUnspecified(): Unit = {
+    val app = new TestApplicationInfo(1, None, 1024)
+    val initialId = app.getNextExecutorId().toString
+    app.addPendingRegisterExecutor(initialId, initialId, handle(initialId), 7, 256)
+    app.kill(initialId, shutdownActor = false)
+
+    assertEquals(Some("1"), app.addPendingRestartedExecutor(initialId))
+    assertEquals(1, app.executors("1").cores)
+    assertEquals(1024, app.executors("1").memoryPerExecutorMB)
   }
 }

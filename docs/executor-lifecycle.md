@@ -16,6 +16,17 @@ against the Ray version used by the application.
 a new executor generation with a different handle cannot replace the slot's
 original handle. It checks Java identity, not native reference counting or GC.
 
+Restart registration is owned by `ApplicationInfo.addPendingRestartedExecutor`.
+The RPC endpoint only forwards the actor ID and returns the result. Missing slots
+are rejected before allocating an executor ID. Resource values come from the
+application description, with the shared default for unspecified executor cores.
+
+Restart state tests live in `ApplicationInfoTest` and reuse its existing actor
+handle fixture. They do not start Netty RPC servers or access private fields by
+reflection. They cover consecutive restarts, unknown/removed slots, application
+resource values distinct from the initial generation, and unspecified cores.
+These tests cover state transitions and Java handle identity, not native GC.
+
 Use JDK 17 and run the existing checks from `core/`:
 
 ```sh

@@ -25,7 +25,7 @@ import io.ray.api.ActorHandle
 
 import org.apache.spark.executor.RayDPExecutor
 import org.apache.spark.internal.Logging
-import org.apache.spark.raydp.RayExecutorUtils
+import org.apache.spark.raydp.{RayExecutorUtils, SparkOnRayConfigs}
 import org.apache.spark.resource.ResourceInformation
 import org.apache.spark.rpc.{RpcAddress, RpcEndpointRef}
 
@@ -100,6 +100,21 @@ private[spark] class ApplicationInfo(
     executors(executorId) = desc
     // Keep the previous generation mapping until the next disconnect or explicit actor shutdown.
     executorIdToActorId(executorId) = actorId
+  }
+
+  // A restart reuses the actor slot and allocates a new Spark executor ID.
+  def addPendingRestartedExecutor(actorId: String): Option[String] = {
+    actorSlots.get(actorId) match {
+      case Some(slot) =>
+        val executorId = getNextExecutorId().toString
+        val cores = desc.coresPerExecutor.getOrElse(
+          SparkOnRayConfigs.DEFAULT_SPARK_CORES_PER_EXECUTOR)
+        addPendingRegisterExecutor(
+          executorId, actorId, slot.handle, cores, desc.memoryPerExecutorMB)
+        Some(executorId)
+      case None =>
+        None
+    }
   }
 
   def updateDesiredExecutors(numExecutors: Int): Unit = {
