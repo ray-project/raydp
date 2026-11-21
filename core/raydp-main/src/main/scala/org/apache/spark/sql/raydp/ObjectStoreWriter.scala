@@ -27,7 +27,7 @@ import org.apache.spark.{RayDPException, SparkContext}
 import org.apache.spark.deploy.raydp._
 import org.apache.spark.executor.RayDPExecutor
 import org.apache.spark.network.util.JavaUtils
-import org.apache.spark.raydp.{RayDPUtils, RayExecutorUtils}
+import org.apache.spark.raydp.{RayDPBlockLocation, RayDPUtils, RayExecutorUtils}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.internal.SQLConf
@@ -81,7 +81,7 @@ object ObjectStoreWriter {
    *
    * This method:
    * - persists and materializes the ArrowBatch RDD in Spark (so partitions can be re-fetched)
-   * - computes per-partition executor locations (Spark executor IDs)
+   * - computes per-partition locations with Spark executor IDs and named Ray actor IDs
    *
    * It does NOT push any data to Ray.
    */
@@ -122,9 +122,10 @@ object ObjectStoreWriter {
          .get
          .asInstanceOf[ActorHandle[RayDPExecutor]]
     }
-    val locations = RayExecutorUtils.getBlockLocations(handles(0), rdd.id, numPartitions)
+    val blockLocations = RayExecutorUtils.getBlockLocations(
+      handles(0), appMasterHandle, rdd.id, numPartitions)
 
-    RecoverableRDDInfo(rdd.id, numPartitions, schemaJson, driverAgentUrl, locations)
+    RecoverableRDDInfo(rdd.id, numPartitions, schemaJson, driverAgentUrl, blockLocations)
   }
 
   /**
@@ -145,9 +146,10 @@ case class RecoverableRDDInfo(
     numPartitions: Int,
     schemaJson: String,
     driverAgentUrl: String,
-    locations: Array[String])
+    blockLocations: Array[RayDPBlockLocation])
 
 object RecoverableRDDInfo {
   // Empty constructor for reflection / Java interop (some tools expect it).
-  def empty: RecoverableRDDInfo = RecoverableRDDInfo(0, 0, "", "", Array.empty[String])
+  def empty: RecoverableRDDInfo =
+    RecoverableRDDInfo(0, 0, "", "", Array.empty[RayDPBlockLocation])
 }
