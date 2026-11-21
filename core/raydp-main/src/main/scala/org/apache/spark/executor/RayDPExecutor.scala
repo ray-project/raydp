@@ -93,7 +93,8 @@ class RayDPExecutor(
         executorId = reply.newExecutorId.get
       } else {
         throw new RuntimeException(
-          s"Executor ${originalActorId} restarted, but getActor failed.")
+          s"AppMaster rejected restart registration for actor $originalActorId; " +
+            "see the AppMaster log for the rejection reason.")
       }
     }
     val registeredResult = appMaster.askSync[Boolean](RegisterExecutor(executorId, nodeIp))

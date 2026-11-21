@@ -319,7 +319,8 @@ class RayAppMaster(host: String,
         logWarning(s"Trying to setup executor: ${executorId} which has been removed")
       }
       val driverUrl = appInfo.desc.command.driverUrl
-      val cores = appInfo.desc.coresPerExecutor.getOrElse(1)
+      val cores = appInfo.desc.coresPerExecutor.getOrElse(
+        SparkOnRayConfigs.DEFAULT_SPARK_CORES_PER_EXECUTOR)
       val appId = appInfo.id
       val classPathEntries = appInfo.desc.command.classPathEntries.mkString(";")
       RayExecutorUtils.setUpExecutor(handlerOpt.get, appId, driverUrl, cores, classPathEntries)

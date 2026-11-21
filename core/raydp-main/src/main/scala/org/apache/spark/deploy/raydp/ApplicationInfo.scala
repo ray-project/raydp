@@ -113,6 +113,9 @@ private[spark] class ApplicationInfo(
           executorId, actorId, slot.handle, cores, desc.memoryPerExecutorMB)
         Some(executorId)
       case None =>
+        logWarning(
+          s"Rejecting executor restart for actor $actorId in application $id: " +
+            "no active actor slot (unknown or removed).")
         None
     }
   }
