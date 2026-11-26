@@ -19,6 +19,7 @@ import os
 import sys
 import time
 import platform
+from unittest import mock
 import pytest
 import pyarrow
 import ray
@@ -28,6 +29,8 @@ from ray.util.placement_group import placement_group_table
 
 import raydp
 import raydp.utils as utils
+from raydp.context import _SparkContext
+from raydp.spark import SparkCluster
 from raydp.spark.ray_cluster_master import RAYDP_SPARK_MASTER_SUFFIX
 from ray.cluster_utils import Cluster
 import ray.util.client as ray_client
@@ -230,6 +233,7 @@ def test_ray_dataset_to_spark(spark_on_ray_2_executors):
 
 @pytest.mark.parametrize("ray_cluster", ["local"], indirect=True)
 def test_placement_group(ray_cluster, jdk17_extra_spark_configs):
+    configs_before = dict(jdk17_extra_spark_configs)
     for pg_strategy in ["PACK", "STRICT_PACK", "SPREAD", "STRICT_SPREAD"]:
         spark = raydp.init_spark(f"test_strategy_{pg_strategy}_1", 1, 1, "500M",
                                  placement_group_strategy=pg_strategy,
@@ -269,6 +273,54 @@ def test_placement_group(ray_cluster, jdk17_extra_spark_configs):
         if p["state"] != "REMOVED"
     ])
     assert num_non_removed_pgs == 0
+    # The same dict was passed to every init_spark call above; RayDP must not modify it.
+    assert jdk17_extra_spark_configs == configs_before
+
+
+def test_spark_context_does_not_mutate_user_configs():
+    configs = {"spark.executor.extraJavaOptions": "-Dfoo=bar"}
+    expected = dict(configs)
+    pg = mock.MagicMock()
+    pg.id.hex.return_value = "fake_pg_id"
+    pg.bundle_count = 1
+    spark_context = _SparkContext(app_name="test_configs",
+                                  num_executors=1,
+                                  executor_cores=1,
+                                  executor_memory="500M",
+                                  enable_hive=False,
+                                  fault_tolerant_mode=False,
+                                  placement_group_strategy=None,
+                                  placement_group=pg,
+                                  placement_group_bundle_indexes=None,
+                                  configs=configs)
+    spark_context._prepare_placement_group()
+    assert spark_context._configs[_SparkContext._PLACEMENT_GROUP_CONF] == "fake_pg_id"
+    # The placement group id must not leak into the caller's dict, otherwise reusing it
+    # in a later init_spark call points executors at a removed placement group.
+    assert configs == expected
+
+
+def test_spark_cluster_does_not_mutate_user_configs():
+    configs = {
+        "spark.driver.extraClassPath": "/user/cp",
+        "spark.driver.extraJavaOptions": "-Dfoo=bar",
+    }
+    expected = dict(configs)
+    with mock.patch.object(SparkCluster, "_set_up_master"), \
+            mock.patch("raydp.spark.ray_cluster.glob.glob",
+                       return_value=["/fake/raydp-agent.jar"]):
+        # Build two clusters from the same dict: the class path and Java options that
+        # SparkCluster appends must not accumulate in the caller's dict.
+        for _ in range(2):
+            cluster = SparkCluster(app_name="test_configs",
+                                   num_executors=1,
+                                   executor_cores=1,
+                                   executor_memory="500M",
+                                   enable_hive=False,
+                                   configs=configs)
+            assert cluster._configs["spark.driver.extraClassPath"].startswith("/user/cp:")
+            assert "-javaagent:" in cluster._configs["spark.driver.extraJavaOptions"]
+    assert configs == expected
 
 
 def test_reconstruction(jdk17_extra_spark_configs):
