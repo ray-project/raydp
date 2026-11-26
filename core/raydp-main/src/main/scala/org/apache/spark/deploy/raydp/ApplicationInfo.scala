@@ -25,7 +25,7 @@ import io.ray.api.ActorHandle
 
 import org.apache.spark.executor.RayDPExecutor
 import org.apache.spark.internal.Logging
-import org.apache.spark.raydp.RayExecutorUtils
+import org.apache.spark.raydp.{RayExecutorUtils, SparkOnRayConfigs}
 import org.apache.spark.resource.ResourceInformation
 import org.apache.spark.rpc.{RpcAddress, RpcEndpointRef}
 
@@ -43,7 +43,9 @@ case class ExecutorDesc(
 }
 
 private[spark] class ExecutorActorSlot(
-    var handle: ActorHandle[RayDPExecutor],
+    // Retain the creation-time handle until slot release. Named lookups do not keep actors
+    // alive in Ray versions with weak lookup semantics (ray-project/ray#45699).
+    val handle: ActorHandle[RayDPExecutor],
     var currentExecutorId: Option[String],
     var previousExecutorId: Option[String])
 
@@ -90,15 +92,33 @@ private[spark] class ApplicationInfo(
       cores: Int,
       memoryInMB: Int): Unit = {
     // Adding a pending executor also declares that its Ray actor slot is still active.
+    // The supplied handle is used only when creating the slot; existing slots retain theirs.
     // For restarted executors, actorId points back to the original named Ray actor.
     val slot = actorSlots.getOrElseUpdate(
       actorId, new ExecutorActorSlot(handler, None, None))
-    slot.handle = handler
     slot.currentExecutorId = Some(executorId)
     val desc = ExecutorDesc(executorId, actorId, cores, memoryInMB, null)
     executors(executorId) = desc
     // Keep the previous generation mapping until the next disconnect or explicit actor shutdown.
     executorIdToActorId(executorId) = actorId
+  }
+
+  // A restart reuses the actor slot and allocates a new Spark executor ID.
+  def addPendingRestartedExecutor(actorId: String): Option[String] = {
+    actorSlots.get(actorId) match {
+      case Some(slot) =>
+        val executorId = getNextExecutorId().toString
+        val cores = desc.coresPerExecutor.getOrElse(
+          SparkOnRayConfigs.DEFAULT_SPARK_CORES_PER_EXECUTOR)
+        addPendingRegisterExecutor(
+          executorId, actorId, slot.handle, cores, desc.memoryPerExecutorMB)
+        Some(executorId)
+      case None =>
+        logWarning(
+          s"Rejecting executor restart for actor $actorId in application $id: " +
+            "no active actor slot (unknown or removed).")
+        None
+    }
   }
 
   def updateDesiredExecutors(numExecutors: Int): Unit = {

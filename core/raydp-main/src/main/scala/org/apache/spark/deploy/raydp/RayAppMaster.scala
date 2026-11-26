@@ -199,22 +199,9 @@ class RayAppMaster(host: String,
         context.reply(success)
 
       case RequestAddPendingRestartedExecutor(actorId) =>
-        val cores = appInfo.desc.coresPerExecutor.getOrElse(1)
-        val memory = appInfo.desc.memoryPerExecutorMB
-        // ray actor will restart using the old ID
-        val handlerOpt = Ray.getActor("raydp-executor-" + actorId)
-        if (!handlerOpt.isPresent) {
-          context.reply(AddPendingRestartedExecutorReply(None))
-        } else if (!appInfo.actorSlots.contains(actorId)) {
-          // The actor may still be visible in Ray after Spark has scaled the slot down.
-          // Do not allow a late restart request to recreate a removed executor.
-          context.reply(AddPendingRestartedExecutorReply(None))
-        } else {
-          val newExecutorId = s"${appInfo.getNextExecutorId()}"
-          val handler = handlerOpt.get.asInstanceOf[ActorHandle[RayDPExecutor]]
-          appInfo.addPendingRegisterExecutor(newExecutorId, actorId, handler, cores, memory)
-          context.reply(AddPendingRestartedExecutorReply(Some(newExecutorId)))
-        }
+        assert(appInfo != null)
+        val executorId = appInfo.addPendingRestartedExecutor(actorId)
+        context.reply(AddPendingRestartedExecutorReply(executorId))
     }
 
     override def onDisconnected(remoteAddress: RpcAddress): Unit = {
@@ -333,7 +320,8 @@ class RayAppMaster(host: String,
         logWarning(s"Trying to setup executor: ${executorId} which has been removed")
       }
       val driverUrl = appInfo.desc.command.driverUrl
-      val cores = appInfo.desc.coresPerExecutor.getOrElse(1)
+      val cores = appInfo.desc.coresPerExecutor.getOrElse(
+        SparkOnRayConfigs.DEFAULT_SPARK_CORES_PER_EXECUTOR)
       val appId = appInfo.id
       val classPathEntries = appInfo.desc.command.classPathEntries.mkString(";")
       RayExecutorUtils.setUpExecutor(handlerOpt.get, appId, driverUrl, cores, classPathEntries)
