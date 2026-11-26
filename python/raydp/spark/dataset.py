@@ -190,7 +190,7 @@ def from_spark_recoverable(df: sql.DataFrame,
     num_partitions = info.numPartitions()
     schema_json = info.schemaJson()
     driver_agent_url = info.driverAgentUrl()
-    locations = info.locations()
+    block_locations = info.blockLocations()
 
     spark_conf = sc.getConf()
     fetch_num_cpus = float(
@@ -202,8 +202,8 @@ def from_spark_recoverable(df: sql.DataFrame,
 
     refs: List[ObjectRef] = []
     for i in range(num_partitions):
-        executor_id = locations[i]
-        executor_actor_name = f"raydp-executor-{executor_id}"
+        actor_id = block_locations[i].getActorId()
+        executor_actor_name = f"raydp-executor-{actor_id}"
         task_opts = {
             "num_cpus": fetch_num_cpus,
             "memory": fetch_memory,
