@@ -29,7 +29,6 @@ Two consequences shape almost every change here:
 | `core/raydp-main/src/test/scala/` | JVM unit tests, run by surefire during `mvn verify` |
 | `doc/` | Guides — `spark_on_ray.md`, `mpi.md` |
 | `doc/plan/` | Implementation plans (immutable once merged) |
-| `doc/adr/` | Architecture decision records (immutable once merged) |
 | `examples/`, `tutorials/` | Runnable examples and Colab notebooks |
 | `build.sh` | Builds core + Python wheel into `dist/` |
 
@@ -135,21 +134,13 @@ Plans capture **what we will build and in what order**, before the implementatio
 
 **The template carries the full section list and per-section guidance** — framing, requirements, design, risk and operations, delivery, in principal-engineer review order. Read it when writing or reviewing a plan; you do not need it for anything else.
 
-Four rules hold whether or not you have the template open:
+These rules hold whether or not you have the template open:
 
 - **Executable by someone else.** Concrete file paths, class and method signatures, message shapes, config keys, edge cases, and acceptance criteria — enough that another contributor or agent can implement it without going back to the author. Do not approve a plan whose load-bearing decisions are deferred to "decided during implementation"; locking those decisions first is the entire point.
 - **Exhaustive about surfaces.** Scala/Java modules under `core/`, **each affected Spark shim** and any new shim module, Maven wiring, the Python API, wheel packaging, the pytest suite, the CI matrix if supported versions change, and `doc/` pages. A surprise file or shim in the implementation PR means the plan was incomplete. If you are unsure whether something is in scope, list it under *Out of scope* with a reason — silence is not an answer.
 - **Diagram when structural.** A mermaid `flowchart` for wiring, `sequenceDiagram` for ordered driver / app master / executor interactions, `stateDiagram-v2` for lifecycle phases. Readability beats type-by-shape orthodoxy.
-- **Immutable once merged.** Trivial edits only — typos, broken links, resolving a deliberate placeholder. A later design shift goes in a new ADR, or a new plan when the scope needs its own phasing. The one exception: amending a plan in its own still-open PR.
-- **No open decisions.** A plan schedules decisions that are already made, so it never depends on an unlanded ADR. If writing or reviewing one surfaces a load-bearing decision that is not recorded yet, land the ADR first rather than carrying the decision inside the plan. Sequencing questions may stay open; design questions may not.
-
-## Decision Recording
-
-ADRs record **why** a decision was made, and they come **before** the plan that schedules the work. Store them in `doc/adr/` as `NNNN-kebab-title.md`, starting from the next free number. Copy `doc/adr/0000-template.md`. When asked to write an ADR, write it there without asking where it goes.
-
-- **ADRs are historical records.** Once merged, an ADR is not edited to reverse, expand, or refine the decision it captured. If a later change supersedes it, write a **new** ADR that references the old one and mark the original `Status: Superseded by ADR-NNNN`. The original stays as written so the decision trail stays auditable.
-- Write an ADR when a decision constrains future work: a Spark or Ray contract RayDP now depends on, an executor-lifecycle model, a compatibility boundary, a deliberate divergence from upstream. Skip it for routine fixes that follow an existing decision.
-- **Do not point code comments at ADRs.** ADRs are immutable records; a comment referencing "see ADR-0003 §Alternatives" rots silently when the decision is superseded. State the contract in the comment itself.
+- **Immutable once merged.** Trivial edits only — typos, broken links, resolving a deliberate placeholder. A later design shift goes in a new plan that supersedes it. The one exception: amending a plan in its own still-open PR.
+- **No open design decisions.** Record each load-bearing design decision, and why it was made, in the plan itself before it is approved. Sequencing questions may stay open; design questions may not.
 
 ## Releases
 

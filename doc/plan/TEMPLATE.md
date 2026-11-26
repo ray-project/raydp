@@ -1,19 +1,14 @@
 # <Title: the change, in plain language>
 
-- **Status:** Draft | In review | Approved | Implemented | Superseded by <plan or ADR>
+- **Status:** Draft | In review | Approved | Implemented | Superseded by <plan>
 - **Date:** YYYY-MM-DD
 - **Owner:** <who is accountable for this landing>
 - **Issue:** #NNN (optional)
 - **PR:** #NNN (optional, the implementation PR)
-- **Implements ADRs:** <links to the already-merged decisions this plan schedules; "none" if it needs no new decision>
 
 > Delete each guidance line as you fill the section in. Skip a section only when it genuinely
 > does not apply, and say so in one line rather than deleting the heading — a reviewer needs to
 > see what you chose not to write. Small changes will legitimately use a handful of these.
->
-> **A plan schedules decisions that are already made.** Every ADR listed above must already be
-> merged. If writing this plan surfaces a load-bearing decision that is not recorded yet, stop
-> and land that ADR first — do not carry the decision inside the plan.
 
 ## Framing
 
@@ -97,7 +92,7 @@ _Which supported lines are affected, what goes behind a shim in `core/shims/`, a
 
 ### Alternatives considered
 
-_Each realistic option, its trade-off, and why it lost. Include "fix it upstream in Spark or Ray" and say why that was not viable. Summarise here only — if the choice constrains future work, it belongs in an ADR that lands **before** this plan, and this section just cites it._
+_Each realistic option, its trade-off, and why it lost. Include "fix it upstream in Spark or Ray" and say why that was not viable._
 
 - **Approach** — what it would have been; why we did not pick it.
 
@@ -181,7 +176,7 @@ _Sequenced phases, each independently shippable where possible, with the concret
 
 ### Open questions
 
-_What is still undecided and who decides it. Scheduling and sequencing questions are fine here. A load-bearing design decision is not — that means an ADR is missing, and it should land before this plan is approved._
+_What is still undecided and who decides it. Scheduling and sequencing questions are fine here. A load-bearing design decision is not — make it in this plan before the plan is approved._
 
 ### FAQ
 
