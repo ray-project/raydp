@@ -23,6 +23,7 @@ import org.slf4j.ILoggerFactory;
 import org.slf4j.spi.LoggerFactoryBinder;
 
 import java.io.PrintStream;
+import java.lang.reflect.Constructor;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -102,7 +103,21 @@ public class StaticLoggerBinder implements LoggerFactoryBinder {
       try {
         tmpFactory = (ILoggerFactory) tempClass.newInstance();
       } catch (Exception e) {
-        e.printStackTrace();
+        // log4j 2.20+ removed the no-arg constructor from
+        // Log4jLoggerFactory. Fall back to the constructor that
+        // accepts a LoggerContext.
+        try {
+          Class<?> ctxClass = Class.forName(
+              "org.apache.logging.log4j.spi.LoggerContext");
+          Constructor<?> ctor = tempClass.getConstructor(ctxClass);
+          Object ctx = Class.forName("org.apache.logging.log4j.LogManager")
+              .getMethod("getContext", boolean.class)
+              .invoke(null, false);
+          tmpFactory = (ILoggerFactory) ctor.newInstance(ctx);
+        } catch (Exception ex) {
+          e.printStackTrace();
+          ex.printStackTrace();
+        }
       } finally {
         FACTORY = tmpFactory;
       }
